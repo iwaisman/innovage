@@ -1,0 +1,61 @@
+<template>
+    <lightning-card title="Roster Files" icon-name="standard:file">
+        <lightning-button-icon
+            slot="actions"
+            icon-name="utility:refresh"
+            alternative-text="Refresh"
+            title="Refresh"
+            onclick={loadFiles}
+        ></lightning-button-icon>
+        <div class="slds-var-p-horizontal_medium">
+            <template lwc:if={error}>
+                <div class="slds-text-color_error slds-var-m-bottom_small" role="alert">{error}</div>
+            </template>
+            <div class="slds-grid slds-wrap slds-gutters">
+                <template for:each={slots} for:item="slot">
+                    <div key={slot.fileType} class="slds-col slds-is-relative slds-size_1-of-1 slds-medium-size_1-of-2 slds-var-m-bottom_medium">
+                        <h3 class="slds-text-heading_small slds-var-m-bottom_x-small">{slot.label}</h3>
+                        <template lwc:if={slot.busy}>
+                            <lightning-spinner alternative-text="Saving file" size="small"></lightning-spinner>
+                        </template>
+                        <template lwc:if={slot.file}>
+                            <p class="slds-var-m-bottom_x-small">
+                                <a href={slot.file.url} data-document-id={slot.file.contentDocumentId} onclick={handleOpenFile}>{slot.file.fileName}</a>
+                                <span class="slds-text-color_weak">
+                                    &nbsp;· Version {slot.file.versionNumber} ·
+                                    <lightning-formatted-date-time
+                                        value={slot.file.lastModifiedDate}
+                                        year="numeric"
+                                        month="short"
+                                        day="numeric"
+                                        hour="2-digit"
+                                        minute="2-digit"
+                                    ></lightning-formatted-date-time>
+                                </span>
+                            </p>
+                            <lightning-button
+                                label="Upload New Version"
+                                icon-name="utility:upload"
+                                data-document-id={slot.file.contentDocumentId}
+                                onclick={handleOpenFile}
+                            ></lightning-button>
+                            <p class="slds-text-body_small slds-text-color_weak slds-var-m-top_xx-small">
+                                Opens the file page. Use its Upload New Version button.
+                            </p>
+                        </template>
+                        <template lwc:else>
+                            <lightning-file-upload
+                                label={slot.uploadLabel}
+                                name={slot.fileType}
+                                data-file-type={slot.fileType}
+                                record-id={recordId}
+                                disabled={slot.busy}
+                                onuploadfinished={handleUploadFinished}
+                            ></lightning-file-upload>
+                        </template>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </lightning-card>
+</template>
