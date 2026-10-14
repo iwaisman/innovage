@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Column__c</fullName>
+    <description>CSV header(s) of an ignored value.</description>
+    <label>Column</label>
+    <length>255</length>
+    <required>false</required>
+    <type>Text</type>
+    <unique>false</unique>
+    <externalId>false</externalId>
+</CustomField>

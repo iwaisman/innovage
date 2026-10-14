@@ -19,7 +19,8 @@ public without sharing class ProviderMatcher {
     public static final String NPI_FIELD = 'NPI__c';
 
     private static final String UNIQUE_ID_FIELD = 'InnovAge_Unique_ID__c';
-    private static final List<String> BASE_FIELDS = new List<String>{ 'Id', UNIQUE_ID_FIELD, NPI_FIELD };
+    private static final String AUTO_NUMBER_FIELD = 'Unique__c';
+    private static final List<String> BASE_FIELDS = new List<String>{ 'Id', UNIQUE_ID_FIELD, AUTO_NUMBER_FIELD, NPI_FIELD };
 
     private static final Pattern NPI_FORMAT = Pattern.compile('^\\d{10}$');
 
@@ -27,11 +28,11 @@ public without sharing class ProviderMatcher {
     private static final Integer NPI_PREFIX_LUHN_SUM = 24;
 
     /*
-     * At most two Providers can match (one per key, since NPI__c is unique), plus
-     * Providers sharing the auto-number but not the Id suffix. The limit only
-     * guards against unexpected data.
+     * Each key matches at most a few Providers (NPI__c is unique; an auto-number
+     * can repeat only with different Id suffixes). The limit only guards against
+     * unexpected data.
      */
-    private static final Integer QUERY_LIMIT = 10;
+    private static final Integer QUERY_LIMIT_PER_KEY = 5;
 
     /**
      * @return The Id of the Account Provider record type
@@ -53,6 +54,19 @@ public without sharing class ProviderMatcher {
     }
 
     /**
+     * The key values of one incoming row.
+     */
+    public class MatchRequest {
+        public String uniqueId { get; private set; }
+        public String npi { get; private set; }
+
+        public MatchRequest(String uniqueId, String npi) {
+            this.uniqueId = uniqueId;
+            this.npi = npi;
+        }
+    }
+
+    /**
      * @param uniqueId The InnovAge Unique ID from the input, or blank
      * @param npi The NPI from the input, or blank
      * @param additionalFields Account field API names to also query on matched records
@@ -60,41 +74,61 @@ public without sharing class ProviderMatcher {
      * @throws IllegalArgumentException if an additional field does not exist on Account
      */
     public static AccountMatchResult match(String uniqueId, String npi, Set<String> additionalFields) {
-        Boolean hasUniqueId = String.isNotBlank(uniqueId);
-        Boolean hasNpi = String.isNotBlank(npi);
+        return matchAll(new List<MatchRequest>{ new MatchRequest(uniqueId, npi) }, additionalFields)[0];
+    }
 
-        if (!hasUniqueId && !hasNpi) {
-            return AccountMatchResult.error(
-                AccountMatchResult.Outcome.NO_KEY_VALUES,
-                'Neither a Provider Unique ID nor an NPI was provided.'
+    /**
+     * Matches many rows with a single query.
+     *
+     * Each result is exactly what match() would return for that row on its
+     * own: rows do not see each other. Detecting two rows that refer to the
+     * same Provider is the caller's job.
+     *
+     * @param requests The rows' key values
+     * @param additionalFields Account field API names to also query on matched records
+     * @return One result per request, in the same order
+     * @throws IllegalArgumentException if requests is null, or an additional field does not exist on Account
+     * @example
+     * List<AccountMatchResult> results = ProviderMatcher.matchAll(requests, new Set<String>{ 'Phone' });
+     */
+    public static List<AccountMatchResult> matchAll(List<MatchRequest> requests, Set<String> additionalFields) {
+        if (requests == null) {
+            throw new IllegalArgumentException('Match requests cannot be null.');
+        }
+
+        // Pass 1: check each row's keys. Rows with missing or malformed keys already have their result.
+        List<RowMatch> rows = new List<RowMatch>();
+        Set<String> autoNumbers = new Set<String>();
+        Set<String> npis = new Set<String>();
+
+        for (MatchRequest request : requests) {
+            RowMatch row = new RowMatch(request);
+            rows.add(row);
+            if (row.uniqueId != null) {
+                autoNumbers.add(row.uniqueId.autoNumber);
+            }
+            if (row.npi != null) {
+                npis.add(row.npi);
+            }
+        }
+
+        // Pass 2: one query for every remaining row, then each is evaluated against its own candidates.
+        if (!autoNumbers.isEmpty() || !npis.isEmpty()) {
+            CandidateIndex candidates = new CandidateIndex(
+                queryCandidates(autoNumbers, npis, additionalFields ?? new Set<String>())
             );
-        }
-
-        InnovAgeUniqueId parsedUniqueId = null;
-        if (hasUniqueId) {
-            parsedUniqueId = InnovAgeUniqueId.parse(uniqueId);
-            if (parsedUniqueId == null || !InnovAgeUniqueId.PROVIDER_PREFIX.equals(parsedUniqueId.prefix)) {
-                return AccountMatchResult.error(
-                    AccountMatchResult.Outcome.MALFORMED_UNIQUE_ID,
-                    'Provider Unique ID "' + uniqueId.trim() + '" is not a valid Provider ID ' +
-                    '(expected P, 9 digits, then 3 letters or digits).'
-                );
+            for (RowMatch row : rows) {
+                if (row.result == null) {
+                    row.result = evaluate(row.uniqueId, row.npi, candidates.forKeys(row.uniqueId, row.npi));
+                }
             }
         }
 
-        String normalizedNpi = null;
-        if (hasNpi) {
-            normalizedNpi = normalizeNpi(npi);
-            if (normalizedNpi == null) {
-                return AccountMatchResult.error(
-                    AccountMatchResult.Outcome.MALFORMED_NPI,
-                    'NPI "' + npi.trim() + '" is not valid (expected 10 digits with a valid check digit).'
-                );
-            }
+        List<AccountMatchResult> results = new List<AccountMatchResult>();
+        for (RowMatch row : rows) {
+            results.add(row.result);
         }
-
-        List<Account> accounts = queryCandidates(parsedUniqueId, normalizedNpi, additionalFields ?? new Set<String>());
-        return evaluate(parsedUniqueId, normalizedNpi, accounts);
+        return results;
     }
 
     /**
@@ -131,9 +165,110 @@ public without sharing class ProviderMatcher {
         return Integer.valueOf(npi.substring(9, 10)) == expectedCheckDigit;
     }
 
+    /*
+     * One request on its way through matchAll().
+     *
+     * The constructor checks the keys. When one is missing or malformed, result
+     * is set to the error and the row is done. Otherwise uniqueId and npi hold the
+     * well-formed keys (null when not supplied), and result stays null until
+     * matchAll() evaluates the row against the query results.
+     */
+    private class RowMatch {
+        InnovAgeUniqueId uniqueId;
+        String npi;
+        AccountMatchResult result;
+
+        RowMatch(MatchRequest request) {
+            String rawUniqueId = request?.uniqueId;
+            String rawNpi = request?.npi;
+            Boolean hasUniqueId = String.isNotBlank(rawUniqueId);
+            Boolean hasNpi = String.isNotBlank(rawNpi);
+
+            if (!hasUniqueId && !hasNpi) {
+                reject(AccountMatchResult.Outcome.NO_KEY_VALUES, 'Neither a Provider Unique ID nor an NPI was provided.');
+                return;
+            }
+
+            if (hasUniqueId) {
+                uniqueId = InnovAgeUniqueId.parse(rawUniqueId);
+                if (uniqueId == null || !InnovAgeUniqueId.PROVIDER_PREFIX.equals(uniqueId.prefix)) {
+                    reject(
+                        AccountMatchResult.Outcome.MALFORMED_UNIQUE_ID,
+                        'Provider Unique ID "' + rawUniqueId.trim() + '" is not a valid Provider ID ' +
+                        '(expected P, 9 digits, then 3 letters or digits).'
+                    );
+                    return;
+                }
+            }
+
+            if (hasNpi) {
+                npi = normalizeNpi(rawNpi);
+                if (npi == null) {
+                    reject(
+                        AccountMatchResult.Outcome.MALFORMED_NPI,
+                        'NPI "' + rawNpi.trim() + '" is not valid (expected 10 digits with a valid check digit).'
+                    );
+                }
+            }
+        }
+
+        /* A rejected row has a result and no keys, so it is neither queried nor evaluated. */
+        private void reject(AccountMatchResult.Outcome outcome, String message) {
+            result = AccountMatchResult.error(outcome, message);
+            uniqueId = null;
+            npi = null;
+        }
+    }
+
+    /*
+     * The queried Providers, grouped by auto-number and by NPI.
+     */
+    private class CandidateIndex {
+        private Map<String, List<Account>> accountsByAutoNumber = new Map<String, List<Account>>();
+        private Map<String, List<Account>> accountsByNpi = new Map<String, List<Account>>();
+
+        CandidateIndex(List<Account> accounts) {
+            for (Account account : accounts) {
+                addToGroup(accountsByAutoNumber, (String) account.get(AUTO_NUMBER_FIELD), account);
+                addToGroup(accountsByNpi, account.NPI__c, account);
+            }
+        }
+
+        /*
+         * The Providers sharing either key, each once. A superset of the real
+         * matches; evaluate() sorts them out.
+         */
+        List<Account> forKeys(InnovAgeUniqueId uniqueId, String npi) {
+            Map<Id, Account> candidatesById = new Map<Id, Account>();
+            if (uniqueId != null) {
+                candidatesById.putAll(accountsByAutoNumber.get(uniqueId.autoNumber) ?? new List<Account>());
+            }
+            if (npi != null) {
+                candidatesById.putAll(accountsByNpi.get(npi) ?? new List<Account>());
+            }
+            return candidatesById.values();
+        }
+
+        private void addToGroup(Map<String, List<Account>> groups, String key, Account account) {
+            if (String.isBlank(key)) {
+                return;
+            }
+            if (!groups.containsKey(key)) {
+                groups.put(key, new List<Account>());
+            }
+            groups.get(key).add(account);
+        }
+    }
+
+    /*
+     * Unique__c is not indexed (2026-10-14 query plan: the OR filter is
+     * "unindexed"), so the query is driven by the RecordTypeId index and
+     * scans every Provider. That is cheap at today's volumes; mark Unique__c
+     * as an External ID if Provider counts grow large.
+     */
     private static List<Account> queryCandidates(
-        InnovAgeUniqueId uniqueId,
-        String npi,
+        Set<String> autoNumbers,
+        Set<String> npis,
         Set<String> additionalFields
     ) {
         Map<String, Object> bindsByName = new Map<String, Object>{
@@ -141,13 +276,13 @@ public without sharing class ProviderMatcher {
         };
         List<String> keyFilters = new List<String>();
 
-        if (uniqueId != null) {
-            keyFilters.add('Unique__c = :autoNumber');
-            bindsByName.put('autoNumber', uniqueId.autoNumber);
+        if (!autoNumbers.isEmpty()) {
+            keyFilters.add(AUTO_NUMBER_FIELD + ' IN :autoNumbers');
+            bindsByName.put('autoNumbers', autoNumbers);
         }
-        if (npi != null) {
-            keyFilters.add(NPI_FIELD + ' = :npi');
-            bindsByName.put('npi', npi);
+        if (!npis.isEmpty()) {
+            keyFilters.add(NPI_FIELD + ' IN :npis');
+            bindsByName.put('npis', npis);
         }
 
         String soql =
@@ -156,7 +291,7 @@ public without sharing class ProviderMatcher {
             ' WHERE RecordTypeId = :providerRecordTypeId' +
             ' AND (' + String.join(keyFilters, ' OR ') + ')' +
             ' ORDER BY CreatedDate' +
-            ' LIMIT ' + QUERY_LIMIT;
+            ' LIMIT ' + (QUERY_LIMIT_PER_KEY * (autoNumbers.size() + npis.size()));
 
         return Database.queryWithBinds(soql, bindsByName, AccessLevel.SYSTEM_MODE);
     }

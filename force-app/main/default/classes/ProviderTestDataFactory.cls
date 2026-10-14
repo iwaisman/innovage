@@ -91,4 +91,142 @@ public class ProviderTestDataFactory {
             'Provider Effective Date' => '01/01/2026'
         };
     }
+
+    /**
+     * @param n Any number from 0 to 99,999,999
+     * @return A 10-digit NPI with a valid check digit, distinct for each n
+     */
+    public static String npi(Integer n) {
+        String base = '2' + String.valueOf(n).leftPad(8, '0');
+        Integer total = 24; // Luhn contribution of the '80840' prefix, as in ProviderMatcher
+        for (Integer i = 0; i < 9; i++) {
+            Integer digit = Integer.valueOf(base.substring(i, i + 1));
+            if (Math.mod(i, 2) == 0) {
+                digit *= 2;
+                if (digit > 9) {
+                    digit -= 9;
+                }
+            }
+            total += digit;
+        }
+        return base + Math.mod(10 - Math.mod(total, 10), 10);
+    }
+
+    /**
+     * @param headers Column order
+     * @param rows Rows, header => value; missing headers are blank
+     * @return CSV text with every value quoted
+     */
+    public static String toCsv(List<String> headers, List<Map<String, String>> rows) {
+        List<String> lines = new List<String>{ quoteAll(headers) };
+        for (Map<String, String> row : rows) {
+            List<String> values = new List<String>();
+            for (String header : headers) {
+                values.add(row.get(header) ?? '');
+            }
+            lines.add(quoteAll(values));
+        }
+        return String.join(lines, '\r\n') + '\r\n';
+    }
+
+    private static String quoteAll(List<String> values) {
+        List<String> quoted = new List<String>();
+        for (String value : values) {
+            quoted.add('"' + value.replace('"', '""') + '"');
+        }
+        return String.join(quoted, ',');
+    }
+
+    /**
+     * Creates a user with the Roster_Ingestion_Files permission set. Classes at
+     * API 67.0 query in user mode by default, and users get access to the Run and
+     * Issue fields only through this permission set; it takes effect inside
+     * System.runAs.
+     *
+     * @param lastName Distinguishes the user; look it up again with ingestionUser()
+     * @return The new user
+     */
+    public static User createIngestionUser(String lastName) {
+        User user = new User(
+            ProfileId = UserInfo.getProfileId(),
+            LastName = lastName,
+            Username = lastName.toLowerCase() + '.' + Datetime.now().getTime() + '@test.invalid',
+            Email = 'roster.ingestion@test.invalid',
+            Alias = 'ringest',
+            TimeZoneSidKey = 'America/Denver',
+            LocaleSidKey = 'en_US',
+            EmailEncodingKey = 'UTF-8',
+            LanguageLocaleKey = 'en_US'
+        );
+        // runAs separates this setup-object DML from later non-setup DML (MIXED_DML_OPERATION).
+        System.runAs(new User(Id = UserInfo.getUserId())) {
+            insert user;
+            insert new PermissionSetAssignment(
+                AssigneeId = user.Id,
+                PermissionSetId = [SELECT Id FROM PermissionSet WHERE Name = 'Roster_Ingestion_Files'].Id
+            );
+        }
+        return user;
+    }
+
+    /**
+     * @param lastName The last name passed to createIngestionUser
+     * @return That user
+     */
+    public static User ingestionUser(String lastName) {
+        return [SELECT Id FROM User WHERE LastName = :lastName LIMIT 1];
+    }
+
+    /**
+     * @return An Organization account, which RosterIngestion__c.Organization__c requires
+     */
+    public static Account createOrganization() {
+        Account organization = new Account(
+            Name = 'Test Organization',
+            RecordTypeId = Schema.SObjectType.Account.getRecordTypeInfosByDeveloperName()
+                .get('Organization')
+                .getRecordTypeId()
+        );
+        insert organization;
+        return organization;
+    }
+
+    /**
+     * @param organizationId An Organization account (see createOrganization)
+     * @return A new RosterIngestion__c
+     */
+    public static RosterIngestion__c createRoster(Id organizationId) {
+        RosterIngestion__c roster = new RosterIngestion__c(Organization__c = organizationId);
+        insert roster;
+        return roster;
+    }
+
+    /**
+     * Uploads a personnel file (or a new version of the existing one) for the roster.
+     *
+     * @param roster The roster; its Personnel_File__c is set on the first upload
+     * @param body The file content
+     * @return The new ContentVersion
+     */
+    public static ContentVersion uploadPersonnelFile(RosterIngestion__c roster, Blob body) {
+        RosterIngestion__c current = [SELECT Id, Personnel_File__c FROM RosterIngestion__c WHERE Id = :roster.Id];
+        ContentVersion version = new ContentVersion(
+            Title = 'personnel',
+            PathOnClient = 'personnel.csv',
+            VersionData = body
+        );
+        if (current.Personnel_File__c == null) {
+            version.FirstPublishLocationId = roster.Id;
+        } else {
+            version.ContentDocumentId = current.Personnel_File__c;
+        }
+        insert version;
+
+        version = [SELECT Id, ContentDocumentId, VersionNumber FROM ContentVersion WHERE Id = :version.Id];
+        if (current.Personnel_File__c == null) {
+            current.Personnel_File__c = version.ContentDocumentId;
+            update current;
+        }
+        return version;
+    }
 }

@@ -62,6 +62,26 @@ public with sharing class CsvParser {
     }
 
 
+    /**
+     * Result of parsing part of a CSV (see parseChunk).
+     *
+     * nextOffset is the character offset of the first record not yet
+     * parsed. It always falls on a record boundary, so passing it back to
+     * parseChunk resumes exactly where this chunk stopped.
+     */
+    public class Chunk {
+        public List<List<String>> records { get; private set; }
+        public Integer nextOffset { get; private set; }
+        public Boolean isEndOfInput { get; private set; }
+
+        private Chunk(List<List<String>> records, Integer nextOffset, Boolean isEndOfInput) {
+            this.records = records;
+            this.nextOffset = nextOffset;
+            this.isEndOfInput = isEndOfInput;
+        }
+    }
+
+
     public class CsvParseException extends Exception {}
 
 
@@ -127,12 +147,7 @@ public with sharing class CsvParser {
             return result;
         }
 
-        for (String header : records[0]) {
-            result.headers.add(header.trim());
-        }
-        //result.headers.addAll(records[0]);
-
-        validateHeaders(result.headers);
+        result.headers.addAll(toHeaders(records[0]));
 
         for (Integer rowIndex = 1; rowIndex < records.size(); rowIndex++) {
             List<String> values = records[rowIndex];
@@ -186,33 +201,95 @@ public with sharing class CsvParser {
 
 
     /**
-     * Parse the CSV into records.
+     * Parse at most maxRecords records, starting at a character offset.
      *
-     * This implementation deliberately does not use String.split().
-     * A CSV record is not necessarily a physical line because a
-     * quoted field may contain CR, LF, or CRLF.
+     * Lets a large CSV be parsed across several transactions: each call
+     * parses one chunk, and the next call resumes from chunk.nextOffset.
+     * Offsets index the whole csv string, so parse error offsets are
+     * absolute too. A UTF-8 BOM is only stripped when startOffset is 0.
+     *
+     * @param csv The complete CSV text
+     * @param startOffset Offset of the first character to parse; 0, or a nextOffset from a previous chunk
+     * @param maxRecords Maximum number of records to return (at least 1)
+     * @param options Parser options; hasHeader is ignored (the header is just the first record)
+     * @return The records and where to resume
+     * @throws CsvParseException if the CSV is malformed or the arguments are invalid
+     * @example
+     * CsvParser.Chunk header = CsvParser.parseChunk(csv, 0, 1, options);
+     * CsvParser.Chunk rows = CsvParser.parseChunk(csv, header.nextOffset, 200, options);
+     */
+    public static Chunk parseChunk(String csv, Integer startOffset, Integer maxRecords, Options options) {
+        if (startOffset == null || startOffset < 0) {
+            throw new CsvParseException('Start offset must be zero or positive.');
+        }
+        if (maxRecords == null || maxRecords < 1) {
+            throw new CsvParseException('Maximum records must be at least 1.');
+        }
+        return parseFrom(csv, options ?? new Options(), startOffset, maxRecords);
+    }
+
+
+    /**
+     * Trim a header record and check it can be used as map keys.
+     *
+     * @param record The first record of a CSV
+     * @return The trimmed header names
+     * @throws CsvParseException if two headers have the same name
+     */
+    public static List<String> toHeaders(List<String> record) {
+        List<String> headers = new List<String>();
+        for (String header : record) {
+            headers.add(header.trim());
+        }
+        validateHeaders(headers);
+        return headers;
+    }
+
+
+    /**
+     * Parse the whole CSV into records.
      */
     private static List<List<String>> parseRecords(
         String csv,
         Options options
     ) {
+        return parseFrom(csv, options, 0, null).records;
+    }
+
+
+    /**
+     * Parse records from startOffset until the input ends or maxRecords
+     * records (null = no limit) have been parsed.
+     *
+     * This implementation deliberately does not use String.split().
+     * A CSV record is not necessarily a physical line because a
+     * quoted field may contain CR, LF, or CRLF.
+     */
+    private static Chunk parseFrom(
+        String csv,
+        Options options,
+        Integer startOffset,
+        Integer maxRecords
+    ) {
         List<List<String>> records = new List<List<String>>();
 
         validateOptions(options);
 
-        if (csv == null || csv.length() == 0) {
-            return records;
+        if (csv == null || startOffset >= csv.length()) {
+            return new Chunk(records, startOffset, true);
         }
 
-        if (options.stripUtf8Bom &&
-            csv.length() > 0 &&
+        Integer i = startOffset;
+
+        /*
+         * The BOM is skipped rather than removed with substring(), so
+         * offsets keep indexing the caller's string.
+         */
+        if (startOffset == 0 &&
+            options.stripUtf8Bom &&
             csv.substring(0, 1) == '\uFEFF') {
 
-            csv = csv.substring(1);
-
-            if (csv.length() == 0) {
-                return records;
-            }
+            i = 1;
         }
 
         String delimiter = options.delimiter;
@@ -242,7 +319,6 @@ public with sharing class CsvParser {
          */
         Boolean recordStarted = false;
 
-        Integer i = 0;
         Integer length = csv.length();
 
         while (i < length) {
@@ -329,6 +405,10 @@ public with sharing class CsvParser {
                     recordStarted = false;
 
                     i = consumeLineEnding(csv, i);
+
+                    if (maxRecords != null && records.size() >= maxRecords) {
+                        return new Chunk(records, i, i >= length);
+                    }
                     continue;
                 }
 
@@ -418,6 +498,10 @@ public with sharing class CsvParser {
                     recordStarted = false;
 
                     i = consumeLineEnding(csv, i);
+
+                    if (maxRecords != null && records.size() >= maxRecords) {
+                        return new Chunk(records, i, i >= length);
+                    }
                     continue;
                 }
 
@@ -475,6 +559,10 @@ public with sharing class CsvParser {
                     recordStarted = false;
 
                     i = consumeLineEnding(csv, i);
+
+                    if (maxRecords != null && records.size() >= maxRecords) {
+                        return new Chunk(records, i, i >= length);
+                    }
                     continue;
                 }
 
@@ -561,7 +649,7 @@ public with sharing class CsvParser {
             );
         }
 
-        return records;
+        return new Chunk(records, length, true);
     }
 
 

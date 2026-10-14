@@ -54,6 +54,20 @@ public inherited sharing class ProviderCsvMapping {
     }
 
     /**
+     * A value that was dropped because it is invalid. The message never contains the value.
+     */
+    public class ValueWarning {
+        /** The CSV header(s) the value came from, e.g. "Provider Email" or "Line 1 / Line 2". */
+        public String column { get; private set; }
+        public String message { get; private set; }
+
+        public ValueWarning(String column, String message) {
+            this.column = column;
+            this.message = message;
+        }
+    }
+
+    /**
      * The result of mapping one CSV row.
      */
     public class MappedRow {
@@ -64,11 +78,22 @@ public inherited sharing class ProviderCsvMapping {
         /** Valid, normalized, non-blank values. */
         public Map<Schema.SObjectField, Object> valuesByField { get; private set; }
 
+        /** One message per dropped value, naming its header(s). */
         public List<String> warnings { get; private set; }
+
+        /** The same warnings, with the column kept separate from the message. */
+        public List<ValueWarning> valueWarnings { get; private set; }
 
         private MappedRow() {
             valuesByField = new Map<Schema.SObjectField, Object>();
             warnings = new List<String>();
+            valueWarnings = new List<ValueWarning>();
+        }
+
+        private void addWarning(List<String> headers, String reason) {
+            String column = String.join(headers, ' / ');
+            warnings.add('Ignored "' + String.join(headers, '" / "') + '": ' + reason + '.');
+            valueWarnings.add(new ValueWarning(column, 'Ignored: ' + reason + '.'));
         }
     }
 
@@ -160,17 +185,15 @@ public inherited sharing class ProviderCsvMapping {
                 continue;
             }
 
-            String headerLabel = '"' + String.join(mapping.headers, '" / "') + '"';
-
             Object value = normalize(mapping, rawValue);
             if (value == null) {
-                mapped.warnings.add('Ignored ' + headerLabel + ': ' + INVALID_REASONS_BY_TYPE.get(mapping.valueType) + '.');
+                mapped.addWarning(mapping.headers, INVALID_REASONS_BY_TYPE.get(mapping.valueType));
                 continue;
             }
 
             Integer maxLength = mapping.field.getDescribe().getLength();
             if (value instanceof String && maxLength > 0 && ((String) value).length() > maxLength) {
-                mapped.warnings.add('Ignored ' + headerLabel + ': longer than ' + maxLength + ' characters.');
+                mapped.addWarning(mapping.headers, 'longer than ' + maxLength + ' characters');
                 continue;
             }
 

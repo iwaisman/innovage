@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <deploymentStatus>Deployed</deploymentStatus>
+    <description>The Roster Ingestion Run object records one processing of a roster file version, as a child of Roster Ingestion. It captures File Type, Dry Run, the pinned file version, Status (Queued to Completed or Failed) and row outcome counts. Commonly used for reviewing ingestion results and resuming or promoting dry runs.</description>
+    <enableReports>true</enableReports>
+    <enableSearch>true</enableSearch>
+    <label>Roster Ingestion Run</label>
+    <nameField>
+        <displayFormat>RUN-{00000}</displayFormat>
+        <label>Roster Ingestion Run Number</label>
+        <startingNumber>1</startingNumber>
+        <type>AutoNumber</type>
+    </nameField>
+    <pluralLabel>Roster Ingestion Runs</pluralLabel>
+    <sharingModel>ControlledByParent</sharingModel>
+    <visibility>Public</visibility>
+</CustomObject>
