@@ -33,19 +33,12 @@ public without sharing class ProviderMatcher {
      */
     private static final Integer QUERY_LIMIT = 10;
 
-    private static Id providerRecordTypeId;
-
     /**
      * @return The Id of the Account Provider record type
+     * @throws Utilities.RecordTypeException if the org has no Provider record type
      */
     public static Id getProviderRecordTypeId() {
-        if (providerRecordTypeId == null) {
-            providerRecordTypeId = Schema.SObjectType.Account
-                .getRecordTypeInfosByDeveloperName()
-                .get(PROVIDER_RECORD_TYPE)
-                .getRecordTypeId();
-        }
-        return providerRecordTypeId;
+        return Utilities.record_type_id('Account', PROVIDER_RECORD_TYPE);
     }
 
     /**
@@ -168,34 +161,77 @@ public without sharing class ProviderMatcher {
         return Database.queryWithBinds(soql, bindsByName, AccessLevel.SYSTEM_MODE);
     }
 
+    /*
+     * Returns BASE_FIELDS plus additionalFields, each field listed once.
+     *
+     * SOQL fails on a field selected twice ("duplicate field selected"), and it
+     * compares field names ignoring case, so 'NPI__c' and 'npi__c' count as the
+     * same field. Apex Sets compare strings case-sensitively, so duplicates are
+     * detected by comparing lower-cased names (selectedLowerCaseNames).
+     */
     private static List<String> fieldsToQuery(Set<String> additionalFields) {
         Map<String, Schema.SObjectField> accountFieldsByName = Schema.SObjectType.Account.fields.getMap();
 
-        Set<String> lowerCaseNames = new Set<String>();
         List<String> fields = new List<String>();
+        Set<String> selectedLowerCaseNames = new Set<String>();
+
         for (String field : BASE_FIELDS) {
-            lowerCaseNames.add(field.toLowerCase());
             fields.add(field);
+            selectedLowerCaseNames.add(field.toLowerCase());
         }
 
         for (String field : additionalFields) {
             String lowerCaseName = field.toLowerCase();
+
+            // Only real Account fields may be spliced into the dynamic SOQL.
             if (!accountFieldsByName.containsKey(lowerCaseName)) {
                 throw new IllegalArgumentException('Account has no field named "' + field + '".');
             }
-            if (lowerCaseNames.add(lowerCaseName)) {
+
+            Boolean alreadySelected = selectedLowerCaseNames.contains(lowerCaseName);
+            if (!alreadySelected) {
                 fields.add(field);
+                selectedLowerCaseNames.add(lowerCaseName);
             }
         }
 
         return fields;
     }
 
+    /*
+     * Decides the outcome from the query results. By this point both keys are
+     * well formed (or null when not supplied).
+     *
+     * "accounts" is a superset of the real matches: the query filtered on the
+     * auto-number (Unique__c) OR the NPI, so it can contain:
+     *
+     *     - the Provider whose full Unique ID matches         -> the Unique ID match
+     *     - Providers sharing the auto-number but not the
+     *       Id suffix (i.e. a different full Unique ID)        -> not a match; ignored
+     *     - the Provider whose NPI matches                    -> the NPI match
+     *
+     * The same Provider may satisfy both keys; that is the normal, good case.
+     *
+     * Steps:
+     *     1. Sort the results into "matched by Unique ID" and "matched by NPI".
+     *     2. A supplied Unique ID must match, otherwise UNKNOWN_UNIQUE_ID
+     *        (even if the NPI matched something).
+     *     3. Combine both kinds of match into a set of distinct Providers:
+     *            0 -> NO_MATCH (only possible when no Unique ID was supplied)
+     *            2+ -> MULTIPLE_MATCHES (the keys point at different Providers)
+     *            1 -> continue
+     *     4. If the single Provider was found by Unique ID, its stored NPI may
+     *        still disagree with the input NPI -> KEY_MISMATCH. A blank stored
+     *        NPI is not a mismatch; the caller fills it in.
+     *     5. Otherwise UNIQUE_MATCH.
+     */
     private static AccountMatchResult evaluate(InnovAgeUniqueId uniqueId, String npi, List<Account> accounts) {
+        // Step 1: classify each returned Provider by which key(s) it actually matches.
         Account uniqueIdAccount = null;
-        List<Account> npiAccounts = new List<Account>();
+        List<Account> npiAccounts = new List<Account>(); // at most one in practice: NPI__c is unique
 
         for (Account account : accounts) {
+            // Full, case-sensitive comparison: sharing the auto-number is not enough.
             if (uniqueId != null && uniqueId.isSameAs(account.InnovAge_Unique_ID__c)) {
                 uniqueIdAccount = account;
             }
@@ -204,6 +240,7 @@ public without sharing class ProviderMatcher {
             }
         }
 
+        // Step 2: a supplied Unique ID is authoritative; if it identifies nobody, stop here.
         if (uniqueId != null && uniqueIdAccount == null) {
             return AccountMatchResult.error(
                 AccountMatchResult.Outcome.UNKNOWN_UNIQUE_ID,
@@ -211,6 +248,9 @@ public without sharing class ProviderMatcher {
             );
         }
 
+        // Step 3: merge both kinds of match, keyed by record Id. A Provider matched by
+        // BOTH keys has one Id, so it lands in the map once, not twice; the map only
+        // grows past 1 when the keys lead to different records.
         Map<Id, Account> matchedAccountsById = new Map<Id, Account>(npiAccounts);
         if (uniqueIdAccount != null) {
             matchedAccountsById.put(uniqueIdAccount.Id, uniqueIdAccount);
@@ -224,12 +264,16 @@ public without sharing class ProviderMatcher {
             );
         }
 
+        // Only reachable without a Unique ID (step 2 handled the other case): a new Provider.
         if (matchedAccountsById.isEmpty()) {
             return AccountMatchResult.noMatch();
         }
 
         Account matched = matchedAccountsById.values()[0];
 
+        // Step 4: exactly one Provider. If it was found by Unique ID and the input also has
+        // an NPI that matched nobody, its stored NPI may differ. A Provider found by NPI
+        // trivially passes this check.
         if (npi != null && String.isNotBlank(matched.NPI__c) && !npi.equals(matched.NPI__c)) {
             return AccountMatchResult.keyMismatch(
                 matched,
@@ -241,6 +285,7 @@ public without sharing class ProviderMatcher {
             );
         }
 
+        // Step 5: every supplied key agrees with this one Provider.
         return AccountMatchResult.uniqueMatch(matched);
     }
 }
