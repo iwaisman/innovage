@@ -1,0 +1,69 @@
+<template>
+    <lightning-card title="Ingestion Runs" icon-name="standard:data_streams">
+        <div slot="actions">
+            <lightning-button-group>
+                <lightning-button label="Dry Run" icon-name="utility:preview" data-dry-run="true" disabled={busy} onclick={handleStart}></lightning-button>
+                <lightning-button label="Ingest" icon-name="utility:upload" variant="brand" disabled={busy} onclick={handleStart}></lightning-button>
+            </lightning-button-group>
+            <lightning-button-icon
+                class="slds-var-m-left_x-small"
+                icon-name="utility:refresh"
+                alternative-text="Refresh"
+                title="Refresh"
+                onclick={loadRuns}
+            ></lightning-button-icon>
+        </div>
+        <div class="slds-var-p-horizontal_medium slds-is-relative">
+            <template lwc:if={busy}>
+                <lightning-spinner alternative-text="Working" size="small"></lightning-spinner>
+            </template>
+            <template lwc:if={error}>
+                <div class="slds-text-color_error slds-var-m-bottom_small" role="alert">{error}</div>
+            </template>
+            <template lwc:if={hasRuns}>
+                <ul class="slds-has-dividers_bottom-space">
+                    <template for:each={rows} for:item="run">
+                        <li key={run.Id} class="slds-item">
+                            <div class="slds-grid slds-grid_vertical-align-center slds-wrap">
+                                <div class="slds-col slds-grow">
+                                    <a href="#" data-id={run.Id} onclick={handleOpenRun}>{run.Name}</a>
+                                    <lightning-badge class={run.statusClass} label={run.Status__c}></lightning-badge>
+                                    <template lwc:if={run.Dry_Run__c}>
+                                        <lightning-badge label="Dry run"></lightning-badge>
+                                    </template>
+                                    <span class="slds-text-color_weak">
+                                        &nbsp;File version {run.Version_Number__c} · {run.CreatedBy.Name} ·
+                                        <lightning-formatted-date-time
+                                            value={run.CreatedDate}
+                                            month="short"
+                                            day="numeric"
+                                            hour="2-digit"
+                                            minute="2-digit"
+                                        ></lightning-formatted-date-time>
+                                    </span>
+                                </div>
+                                <div class="slds-col slds-grow-none">
+                                    <template lwc:if={run.canPromote}>
+                                        <lightning-button label="Ingest This Version" data-id={run.Id} disabled={busy} onclick={handlePromote}></lightning-button>
+                                    </template>
+                                    <template lwc:if={run.isActive}>
+                                        <lightning-button label="Cancel" data-id={run.Id} disabled={busy} onclick={handleCancel}></lightning-button>
+                                    </template>
+                                </div>
+                            </div>
+                            <p class="slds-text-body_small slds-var-m-top_xx-small">{run.summary}</p>
+                            <template lwc:if={run.Failure_Message__c}>
+                                <p class="slds-text-body_small slds-text-color_error">{run.Failure_Message__c}</p>
+                            </template>
+                        </li>
+                    </template>
+                </ul>
+            </template>
+            <template lwc:else>
+                <p class="slds-text-color_weak slds-var-m-bottom_small">
+                    No runs yet. A dry run reports what ingesting the personnel file would do without changing any Provider.
+                </p>
+            </template>
+        </div>
+    </lightning-card>
+</template>

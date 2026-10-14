@@ -6,14 +6,27 @@ non-real: SSNs use the 9xx area (never issued), phones use the 555-01xx
 fictional range, and emails use example.com. NPIs are random but carry a
 valid Luhn check digit so they pass format validation.
 
+Provider Unique ID is left blank: ingestion requires a supplied Unique ID to
+identify an existing Provider, so generated rows describe new Providers and are
+matched by NPI. To exercise the update path, pass --existing-ids with real
+Provider keys from the org; those rows become updates of existing Providers.
+
 Examples:
     python3 scripts/generate_roster_csv.py --rows 100 -o roster.csv
     python3 scripts/generate_roster_csv.py --rows 500 --error-rate 0.1 --seed 42 > roster.csv
+    python3 scripts/generate_roster_csv.py --rows 500 --existing-ids providers.csv -o roster.csv
+
+The --existing-ids file has one Provider per line: the InnovAge Unique ID,
+optionally followed by a comma and the Provider's NPI. Export it with:
+    sf data query -o innovage -r csv \\
+        -q "SELECT InnovAge_Unique_ID__c, NPI__c FROM Account WHERE RecordType.DeveloperName = 'Provider' LIMIT 100"
+(a header line, if present, is skipped).
 """
 
 import argparse
 import csv
 import random
+import re
 import sys
 from datetime import date, timedelta
 
@@ -102,6 +115,10 @@ CITIES = [
 ]
 ROSTER_LINE_TYPES = ["Add", "Change", "Term"]
 
+# InnovAge Unique ID of a Provider: P + 9-digit auto-number + last 3 characters of the record Id
+# (see InnovAgeUniqueId.cls).
+PROVIDER_UNIQUE_ID = re.compile(r"^P\d{9}[A-Za-z0-9]{3}$")
+
 
 def random_date(start: date, end: date) -> date:
     return start + timedelta(days=random.randint(0, (end - start).days))
@@ -155,7 +172,8 @@ def generate_address() -> dict:
     }
 
 
-def generate_row(index: int) -> dict:
+def generate_row(index: int, existing: tuple = None) -> dict:
+    """A valid row for a new Provider, or an update of an existing one ((unique_id, npi) in existing)."""
     today = date.today()
     first = random.choice(FIRST_NAMES)
     last = random.choice(LAST_NAMES)
@@ -178,7 +196,7 @@ def generate_row(index: int) -> dict:
     return {
         "Provider Effective Date": fmt(random_date(today - timedelta(days=90), today + timedelta(days=90))),
         "Roster Line Type": random.choices(ROSTER_LINE_TYPES, weights=[70, 20, 10])[0],
-        "Provider Unique ID": f"PRV-{index:06d}",
+        "Provider Unique ID": existing[0] if existing else "",
         "Salutation": random.choice(["Dr.", "Dr.", "Mr.", "Ms.", "Mx.", ""]),
         "First Name": first,
         "Middle Name": random.choice(FIRST_NAMES) if random.random() < 0.6 else "",
@@ -208,7 +226,8 @@ def generate_row(index: int) -> dict:
         "CAQH ID": f"{random.randint(10000000, 19999999)}",
         "Initial Credentialing Date": fmt(initial_cred),
         "Last Credentialing Date": fmt(last_cred),
-        "Individual NPI": generate_npi(),
+        # An existing Provider keeps its own NPI (a different one would be a key mismatch).
+        "Individual NPI": existing[1] if existing else generate_npi(),
         "Provider Attests to Providing Gender Affirming Care?": random.choice(["Yes", "No"]),
         "Medicare ID": f"{medicaid_state}{random.randint(1000000, 9999999)}",
         "Medicaid ID State": medicaid_state,
@@ -218,13 +237,13 @@ def generate_row(index: int) -> dict:
 
 # Each error mutates a valid row in place and returns a short description.
 def _bad_npi(row):
-    npi = row["Individual NPI"]
+    npi = row["Individual NPI"] or generate_npi()
     row["Individual NPI"] = npi[:9] + str((int(npi[9]) + 1) % 10)
     return "NPI with invalid check digit"
 
 
 def _short_npi(row):
-    row["Individual NPI"] = row["Individual NPI"][:8]
+    row["Individual NPI"] = (row["Individual NPI"] or generate_npi())[:8]
     return "NPI with wrong length"
 
 
@@ -236,6 +255,11 @@ def _bad_dob(row):
 def _future_dob(row):
     row["Date of Birth"] = fmt(date.today() + timedelta(days=random.randint(1, 3650)))
     return "Date of Birth in the future"
+
+
+def _bad_unique_id(row):
+    row["Provider Unique ID"] = random.choice(["PRV-000123", "P12345", "PG000000001abc"])
+    return "malformed Provider Unique ID"
 
 
 def _missing_required(row):
@@ -279,8 +303,25 @@ def _cred_order(row):
 
 ERROR_INJECTORS = [
     _bad_npi, _short_npi, _bad_dob, _future_dob, _missing_required, _bad_ssn,
-    _bad_state, _bad_zip, _bad_email, _bad_line_type, _cred_order,
+    _bad_state, _bad_zip, _bad_email, _bad_line_type, _cred_order, _bad_unique_id,
 ]
+
+
+def read_existing_ids(path: str) -> list:
+    """(unique_id, npi) pairs from --existing-ids; npi is "" when not given."""
+    existing = []
+    with open(path, newline="", encoding="utf-8") as f:
+        for line_no, fields in enumerate(csv.reader(f), start=1):
+            fields = [value.strip() for value in fields]
+            if not fields or not fields[0]:
+                continue
+            unique_id = fields[0]
+            if not PROVIDER_UNIQUE_ID.match(unique_id):
+                if line_no == 1:
+                    continue  # header line
+                sys.exit(f"{path} line {line_no}: {unique_id!r} is not a Provider Unique ID (P + 9 digits + 3 characters)")
+            existing.append((unique_id, fields[1] if len(fields) > 1 else ""))
+    return existing
 
 
 def parse_args():
@@ -292,7 +333,10 @@ def parse_args():
         "--error-rate", type=float, default=0.0,
         help="fraction of rows (0-1) that get one injected validation error (default: 0)",
     )
-    parser.add_argument("--start-id", type=int, default=1, help="starting number for Provider Unique ID (default: 1)")
+    parser.add_argument(
+        "--existing-ids", metavar="FILE",
+        help="existing Providers (Unique ID[,NPI] per line); the first rows update them, the rest are new",
+    )
     args = parser.parse_args()
     if args.rows < 0:
         parser.error("--rows must be >= 0")
@@ -301,10 +345,18 @@ def parse_args():
     return args
 
 
+def row_label(row: dict) -> str:
+    return row["Provider Unique ID"] or f"NPI {row['Individual NPI'] or '(none)'}"
+
+
 def main():
     args = parse_args()
     if args.seed is not None:
         random.seed(args.seed)
+
+    existing = read_existing_ids(args.existing_ids) if args.existing_ids else []
+    if len(existing) > args.rows:
+        print(f"Using {args.rows} of {len(existing)} existing Providers.", file=sys.stderr)
 
     out = open(args.output, "w", newline="", encoding="utf-8") if args.output else sys.stdout
     injected = []
@@ -312,11 +364,11 @@ def main():
         writer = csv.DictWriter(out, fieldnames=HEADERS, lineterminator="\n")
         writer.writeheader()
         for i in range(args.rows):
-            row = generate_row(args.start_id + i)
+            row = generate_row(i + 1, existing[i] if i < len(existing) else None)
             if random.random() < args.error_rate:
                 description = random.choice(ERROR_INJECTORS)(row)
                 # +2: 1-based line numbers plus the header line
-                injected.append((i + 2, row["Provider Unique ID"], description))
+                injected.append((i + 2, row_label(row), description))
             writer.writerow(row)
     finally:
         if out is not sys.stdout:
@@ -324,8 +376,8 @@ def main():
 
     if injected:
         print(f"Injected {len(injected)} error(s):", file=sys.stderr)
-        for line_no, provider_id, description in injected:
-            print(f"  line {line_no} ({provider_id}): {description}", file=sys.stderr)
+        for line_no, label, description in injected:
+            print(f"  line {line_no} ({label}): {description}", file=sys.stderr)
 
 
 if __name__ == "__main__":

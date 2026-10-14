@@ -17,10 +17,13 @@ private class RosterIngestionFileControllerTest {
             LanguageLocaleKey = 'en_US'
         );
         insert user;
-        insert new PermissionSetAssignment(
-            AssigneeId = user.Id,
-            PermissionSetId = [SELECT Id FROM PermissionSet WHERE Name = 'Roster_Ingestion_Files'].Id
-        );
+        // runAs separates this setup-object DML from the Account insert below (MIXED_DML_OPERATION).
+        System.runAs(new User(Id = UserInfo.getUserId())) {
+            insert new PermissionSetAssignment(
+                AssigneeId = user.Id,
+                PermissionSetId = [SELECT Id FROM PermissionSet WHERE Name = 'Roster_Ingestion_Files'].Id
+            );
+        }
 
         // RosterIngestion__c.Organization__c only accepts Organization accounts
         Account organization = new Account(

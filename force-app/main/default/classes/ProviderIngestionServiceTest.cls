@@ -194,4 +194,172 @@ private class ProviderIngestionServiceTest {
         }
         Test.stopTest();
     }
+
+    // ─── Bulk (ingestAll) ──────────────────────────────────────────────
+
+    private static ProviderIngestionService.RowInput newProviderRow(Integer rowNumber, String npi) {
+        Map<String, String> row = ProviderTestDataFactory.createValidRow();
+        row.put(ProviderCsvMapping.NPI_HEADER, npi);
+        row.put('Last Name', 'Bulk' + rowNumber);
+        return new ProviderIngestionService.RowInput(rowNumber, row);
+    }
+
+    private static List<ProviderIngestionService.IngestResult> ingestAll(
+        List<ProviderIngestionService.RowInput> rows,
+        Boolean dryRun
+    ) {
+        return ProviderIngestionService.ingestAll(rows, dryRun);
+    }
+
+    @IsTest
+    static void shouldInsertAndUpdateInBulk_WhenManyRows() {
+        List<ProviderIngestionService.RowInput> rows = new List<ProviderIngestionService.RowInput>();
+        for (Integer i = 0; i < 251; i++) {
+            rows.add(newProviderRow(i + 2, ProviderTestDataFactory.npi(i)));
+        }
+        Map<String, String> updateRow = rowWithNpi(ProviderTestDataFactory.NPI_1);
+        updateRow.put('Provider Phone', '720-555-0177');
+        rows.add(new ProviderIngestionService.RowInput(253, updateRow));
+
+        Test.startTest();
+        List<ProviderIngestionService.IngestResult> results = ingestAll(rows, false);
+        Test.stopTest();
+
+        Assert.areEqual(252, results.size(), 'One result per row');
+        for (Integer i = 0; i < 251; i++) {
+            Assert.areEqual(ProviderIngestionService.Outcome.INSERTED, results[i].outcome, 'Row ' + results[i].rowNumber + ': ' + results[i].errors);
+        }
+        Assert.areEqual(ProviderIngestionService.Outcome.UPDATED, results[251].outcome, 'Existing Provider updated: ' + results[251].errors);
+        Assert.areEqual(253, results[251].rowNumber, 'Results keep their row numbers');
+        Assert.areEqual(251, [SELECT COUNT() FROM Account WHERE LastName LIKE 'Bulk%'], 'All new Providers inserted');
+        Assert.areEqual('(720) 555-0177', existing(EXISTING).Phone, 'Phone updated');
+    }
+
+    // ─── Duplicate rows (see DUPLICATES in ProviderIngestionService) ───
+
+    @IsTest
+    static void shouldFailLaterInsert_WhenNewNpiRepeatsInSameCall() {
+        String npi = ProviderTestDataFactory.npi(1);
+        List<ProviderIngestionService.RowInput> rows = new List<ProviderIngestionService.RowInput>{
+            newProviderRow(2, npi),
+            newProviderRow(3, npi)
+        };
+
+        Test.startTest();
+        List<ProviderIngestionService.IngestResult> results = ingestAll(rows, false);
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIngestionService.Outcome.INSERTED, results[0].outcome, 'First row inserts: ' + results[0].errors);
+        Assert.areEqual(ProviderIngestionService.Outcome.ERROR, results[1].outcome, 'Second insert is rejected');
+        Assert.areEqual(ProviderIngestionService.SAVE_ERROR, results[1].errorCode, 'By the database (NPI__c is unique)');
+        Assert.areEqual(1, [SELECT COUNT() FROM Account WHERE NPI__c = :npi], 'One Provider inserted');
+    }
+
+    @IsTest
+    static void shouldUpdateInsertedProvider_WhenNpiRepeatsInLaterCall() {
+        String npi = ProviderTestDataFactory.npi(2);
+        Id insertedId = ingestAll(new List<ProviderIngestionService.RowInput>{ newProviderRow(2, npi) }, false)[0].accountId;
+        ProviderIngestionService.RowInput laterRow = newProviderRow(900, npi);
+        laterRow.values.put('Provider Phone', '720-555-0199');
+
+        Test.startTest();
+        List<ProviderIngestionService.IngestResult> results = ingestAll(new List<ProviderIngestionService.RowInput>{ laterRow }, false);
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIngestionService.Outcome.UPDATED, results[0].outcome, 'Later chunk updates the Provider: ' + results[0].errors);
+        Assert.areEqual(insertedId, results[0].accountId, 'The Provider the earlier chunk inserted');
+        Assert.areEqual('(720) 555-0199', reload(insertedId).Phone, 'Later row\'s value saved');
+    }
+
+    @IsTest
+    static void shouldMergeUpdates_WhenRowsInSameCallChangeSameProvider() {
+        Account provider = existing(EXISTING);
+        Map<String, String> byUniqueId = new Map<String, String>{
+            ProviderCsvMapping.UNIQUE_ID_HEADER => provider.InnovAge_Unique_ID__c,
+            'Provider Phone' => '720-555-0101'
+        };
+        Map<String, String> byNpi = rowWithNpi(ProviderTestDataFactory.NPI_1);
+        byNpi.put('Provider Phone', '720-555-0102');
+        byNpi.put('Provider Email', 'merged@example.com');
+
+        Test.startTest();
+        List<ProviderIngestionService.IngestResult> results = ingestAll(
+            new List<ProviderIngestionService.RowInput>{
+                new ProviderIngestionService.RowInput(2, byUniqueId),
+                new ProviderIngestionService.RowInput(3, byNpi)
+            },
+            false
+        );
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIngestionService.Outcome.UPDATED, results[0].outcome, 'First row updated: ' + results[0].errors);
+        Assert.areEqual(ProviderIngestionService.Outcome.UPDATED, results[1].outcome, 'Second row updated: ' + results[1].errors);
+        Assert.areEqual(new Set<String>{ 'Phone' }, results[0].changesByField.keySet(), 'Each row reports its own changes');
+        Assert.areEqual(new Set<String>{ 'Phone', 'PersonEmail' }, results[1].changesByField.keySet(), 'Each row reports its own changes');
+        Account updated = reload(provider.Id);
+        Assert.areEqual('(720) 555-0102', updated.Phone, 'The later row wins a field both rows change');
+        Assert.areEqual('merged@example.com', updated.PersonEmail, 'Fields only one row changes are saved');
+    }
+
+    @IsTest
+    static void shouldRollBackProviders_WhenDryRun() {
+        Map<String, String> updateRow = rowWithNpi(ProviderTestDataFactory.NPI_1);
+        updateRow.put('Provider Phone', '720-555-0188');
+        List<ProviderIngestionService.RowInput> rows = new List<ProviderIngestionService.RowInput>{
+            newProviderRow(2, ProviderTestDataFactory.NPI_3),
+            new ProviderIngestionService.RowInput(3, updateRow)
+        };
+        String phoneBefore = existing(EXISTING).Phone;
+
+        Test.startTest();
+        List<ProviderIngestionService.IngestResult> results = ingestAll(rows, true);
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIngestionService.Outcome.INSERTED, results[0].outcome, 'Reports the would-be insert: ' + results[0].errors);
+        Assert.isNull(results[0].accountId, 'A rolled-back insert has no Provider');
+        Assert.areEqual(ProviderIngestionService.Outcome.UPDATED, results[1].outcome, 'Reports the would-be update');
+        Assert.areEqual(1, results[1].changesByField.size(), 'Reports the would-be change');
+        Assert.areEqual(0, [SELECT COUNT() FROM Account WHERE NPI__c = :ProviderTestDataFactory.NPI_3], 'Insert rolled back');
+        Assert.areEqual(phoneBefore, existing(EXISTING).Phone, 'Update rolled back');
+    }
+
+    @IsTest
+    static void shouldReportWarningColumn_WhenValueInvalid() {
+        Map<String, String> row = rowWithNpi(ProviderTestDataFactory.NPI_1);
+        row.put('Provider Email', 'not-an-email');
+
+        Test.startTest();
+        List<ProviderIngestionService.IngestResult> results = ingestAll(
+            new List<ProviderIngestionService.RowInput>{ new ProviderIngestionService.RowInput(2, row) },
+            false
+        );
+        Test.stopTest();
+
+        Assert.areEqual(1, results[0].valueWarnings.size(), 'One structured warning');
+        Assert.areEqual('Provider Email', results[0].valueWarnings[0].column, 'Names the column');
+        Assert.isFalse(results[0].valueWarnings[0].message.contains('not-an-email'), 'Never echoes the value');
+    }
+
+    @IsTest
+    static void shouldThrow_WhenRowsNull() {
+        Test.startTest();
+        try {
+            ProviderIngestionService.ingestAll(null, false);
+            Assert.fail('Expected IllegalArgumentException');
+        } catch (IllegalArgumentException e) {
+            Assert.isTrue(e.getMessage().contains('null'), 'Message explains the null argument');
+        }
+        Test.stopTest();
+    }
+
+    @IsTest
+    static void shouldReportMalformedNpiOnce_WhenNpiInvalid() {
+        Test.startTest();
+        ProviderIngestionService.IngestResult result = ProviderIngestionService.ingest(rowWithNpi('1234567890'));
+        Test.stopTest();
+
+        Assert.areEqual(AccountMatchResult.Outcome.MALFORMED_NPI.name(), result.errorCode, 'Reported as an error');
+        Assert.areEqual(0, result.valueWarnings.size(), 'Not repeated as a warning: ' + result.warnings);
+        Assert.areEqual(0, result.warnings.size(), 'Plain warnings stay in step');
+    }
 }

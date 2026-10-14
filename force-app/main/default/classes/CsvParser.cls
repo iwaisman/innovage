@@ -127,12 +127,7 @@ public with sharing class CsvParser {
             return result;
         }
 
-        for (String header : records[0]) {
-            result.headers.add(header.trim());
-        }
-        //result.headers.addAll(records[0]);
-
-        validateHeaders(result.headers);
+        result.headers.addAll(toHeaders(records[0]));
 
         for (Integer rowIndex = 1; rowIndex < records.size(); rowIndex++) {
             List<String> values = records[rowIndex];
@@ -162,6 +157,23 @@ public with sharing class CsvParser {
         }
 
         return result;
+    }
+
+
+    /**
+     * Trim a header record and check it can be used as map keys.
+     *
+     * @param record The first record of a CSV
+     * @return The trimmed header names
+     * @throws CsvParseException if two headers have the same name
+     */
+    public static List<String> toHeaders(List<String> record) {
+        List<String> headers = new List<String>();
+        for (String header : record) {
+            headers.add(header.trim());
+        }
+        validateHeaders(headers);
+        return headers;
     }
 
 

@@ -250,4 +250,62 @@ private class ProviderMatcherTest {
         }
         Test.stopTest();
     }
+
+    // ─── Bulk (matchAll) ───────────────────────────────────────────────
+
+    @IsTest
+    static void shouldMatchEachRowIndependently_WhenMatchingInBulk() {
+        Account withNpi = provider(WITH_NPI);
+        List<ProviderMatcher.MatchRequest> requests = new List<ProviderMatcher.MatchRequest>{
+            new ProviderMatcher.MatchRequest(null, ProviderTestDataFactory.NPI_1),
+            new ProviderMatcher.MatchRequest(null, ProviderTestDataFactory.NPI_UNUSED),
+            new ProviderMatcher.MatchRequest('P123', null),
+            new ProviderMatcher.MatchRequest(withNpi.InnovAge_Unique_ID__c, ProviderTestDataFactory.NPI_2),
+            new ProviderMatcher.MatchRequest(null, null)
+        };
+
+        Test.startTest();
+        List<AccountMatchResult> results = ProviderMatcher.matchAll(requests, null);
+        Test.stopTest();
+
+        Assert.areEqual(AccountMatchResult.Outcome.UNIQUE_MATCH, results[0].outcome, 'NPI match');
+        Assert.areEqual(withNpi.Id, results[0].account.Id, 'Matched the right Provider');
+        Assert.areEqual(AccountMatchResult.Outcome.NO_MATCH, results[1].outcome, 'Unused NPI');
+        Assert.areEqual(AccountMatchResult.Outcome.MALFORMED_UNIQUE_ID, results[2].outcome, 'Malformed Unique ID');
+        Assert.areEqual(AccountMatchResult.Outcome.MULTIPLE_MATCHES, results[3].outcome, 'Keys point at different Providers');
+        Assert.areEqual(AccountMatchResult.Outcome.NO_KEY_VALUES, results[4].outcome, 'No keys');
+    }
+
+    @IsTest
+    static void shouldQueryOnce_WhenMatchingManyRows() {
+        List<ProviderMatcher.MatchRequest> requests = new List<ProviderMatcher.MatchRequest>();
+        for (Integer i = 0; i < 251; i++) {
+            requests.add(new ProviderMatcher.MatchRequest(null, ProviderTestDataFactory.npi(i)));
+        }
+
+        Test.startTest();
+        Integer queriesBefore = Limits.getQueries();
+        List<AccountMatchResult> results = ProviderMatcher.matchAll(requests, null);
+        Integer queriesUsed = Limits.getQueries() - queriesBefore;
+        Test.stopTest();
+
+        Assert.areEqual(251, results.size(), 'One result per request');
+        Assert.areEqual(1, queriesUsed, 'One query regardless of the number of rows');
+        Assert.areEqual(AccountMatchResult.Outcome.NO_MATCH, results[250].outcome, 'Unused NPIs do not match');
+    }
+
+    @IsTest
+    static void shouldNotQuery_WhenNoRowHasValidKeys() {
+        Test.startTest();
+        Integer queriesBefore = Limits.getQueries();
+        List<AccountMatchResult> results = ProviderMatcher.matchAll(
+            new List<ProviderMatcher.MatchRequest>{ new ProviderMatcher.MatchRequest(null, '123') },
+            null
+        );
+        Integer queriesUsed = Limits.getQueries() - queriesBefore;
+        Test.stopTest();
+
+        Assert.areEqual(AccountMatchResult.Outcome.MALFORMED_NPI, results[0].outcome, 'Malformed NPI');
+        Assert.areEqual(0, queriesUsed, 'Nothing to query');
+    }
 }
