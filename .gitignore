@@ -46,3 +46,8 @@ $RECYCLE.BIN/
 **/__pycache__/
 **/.venv/
 **/venv/
+
+
+# Legacy APEX
+Utilities.cls
+Utilities.cls-meta.xml

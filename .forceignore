@@ -12,3 +12,7 @@ package.xml
 **/__tests__/**
 
 node_modules/
+
+# Shared org class retrieved for reference only; never deploy from this repo
+**/classes/Utilities.cls
+**/classes/Utilities.cls-meta.xml
