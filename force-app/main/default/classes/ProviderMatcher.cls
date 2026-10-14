@@ -20,7 +20,7 @@ public without sharing class ProviderMatcher {
 
     private static final String UNIQUE_ID_FIELD = 'InnovAge_Unique_ID__c';
     private static final String AUTO_NUMBER_FIELD = 'Unique__c';
-    private static final List<String> BASE_FIELDS = new List<String>{ 'Id', UNIQUE_ID_FIELD, AUTO_NUMBER_FIELD, NPI_FIELD };
+    private static final List<String> BASE_FIELDS = new List<String>{ 'Id', UNIQUE_ID_FIELD, NPI_FIELD };
 
     private static final Pattern NPI_FORMAT = Pattern.compile('^\\d{10}$');
 
@@ -28,9 +28,9 @@ public without sharing class ProviderMatcher {
     private static final Integer NPI_PREFIX_LUHN_SUM = 24;
 
     /*
-     * Each key matches at most a few Providers (NPI__c is unique; an auto-number
-     * can repeat only with different Id suffixes). The limit only guards against
-     * unexpected data.
+     * Each key matches at most one Provider (NPI__c is unique; an auto-number is
+     * unique unless an admin resets it, see CandidateIndex). The limit only guards
+     * against unexpected data.
      */
     private static final Integer QUERY_LIMIT_PER_KEY = 5;
 
@@ -112,14 +112,19 @@ public without sharing class ProviderMatcher {
             }
         }
 
-        // Pass 2: one query for every remaining row, then each is evaluated against its own candidates.
+        // Pass 2: one query for every remaining row, then each is evaluated against the Providers its keys identify.
         if (!autoNumbers.isEmpty() || !npis.isEmpty()) {
             CandidateIndex candidates = new CandidateIndex(
                 queryCandidates(autoNumbers, npis, additionalFields ?? new Set<String>())
             );
             for (RowMatch row : rows) {
                 if (row.result == null) {
-                    row.result = evaluate(row.uniqueId, row.npi, candidates.forKeys(row.uniqueId, row.npi));
+                    row.result = evaluate(
+                        row.uniqueId,
+                        row.npi,
+                        candidates.byUniqueId(row.uniqueId),
+                        candidates.byNpi(row.npi)
+                    );
                 }
             }
         }
@@ -221,42 +226,40 @@ public without sharing class ProviderMatcher {
     }
 
     /*
-     * The queried Providers, grouped by auto-number and by NPI.
+     * The queried Providers, by full Unique ID and by NPI.
+     *
+     * The query filters on the auto-number (Unique__c) because the Unique ID
+     * formula cannot be filtered efficiently, but a Provider is identified by its
+     * full Unique ID. Map keys compare case-sensitively, as the Id suffix
+     * requires, so a well-formed ID whose auto-number exists but whose suffix
+     * does not match finds nothing.
+     *
+     * Both keys identify at most one Provider: NPI__c is a unique field, and a
+     * full Unique ID includes part of the record Id. If two Providers ever shared
+     * one (only possible after an admin resets the auto-number, and then only on
+     * an Id-suffix collision), the later one in the query results wins.
      */
     private class CandidateIndex {
-        private Map<String, List<Account>> accountsByAutoNumber = new Map<String, List<Account>>();
-        private Map<String, List<Account>> accountsByNpi = new Map<String, List<Account>>();
+        private Map<String, Account> accountsByUniqueId = new Map<String, Account>();
+        private Map<String, Account> accountsByNpi = new Map<String, Account>();
 
         CandidateIndex(List<Account> accounts) {
             for (Account account : accounts) {
-                addToGroup(accountsByAutoNumber, (String) account.get(AUTO_NUMBER_FIELD), account);
-                addToGroup(accountsByNpi, account.NPI__c, account);
+                if (String.isNotBlank(account.InnovAge_Unique_ID__c)) {
+                    accountsByUniqueId.put(account.InnovAge_Unique_ID__c, account);
+                }
+                if (String.isNotBlank(account.NPI__c)) {
+                    accountsByNpi.put(account.NPI__c, account);
+                }
             }
         }
 
-        /*
-         * The Providers sharing either key, each once. A superset of the real
-         * matches; evaluate() sorts them out.
-         */
-        List<Account> forKeys(InnovAgeUniqueId uniqueId, String npi) {
-            Map<Id, Account> candidatesById = new Map<Id, Account>();
-            if (uniqueId != null) {
-                candidatesById.putAll(accountsByAutoNumber.get(uniqueId.autoNumber) ?? new List<Account>());
-            }
-            if (npi != null) {
-                candidatesById.putAll(accountsByNpi.get(npi) ?? new List<Account>());
-            }
-            return candidatesById.values();
+        Account byUniqueId(InnovAgeUniqueId uniqueId) {
+            return uniqueId == null ? null : accountsByUniqueId.get(uniqueId.value);
         }
 
-        private void addToGroup(Map<String, List<Account>> groups, String key, Account account) {
-            if (String.isBlank(key)) {
-                return;
-            }
-            if (!groups.containsKey(key)) {
-                groups.put(key, new List<Account>());
-            }
-            groups.get(key).add(account);
+        Account byNpi(String npi) {
+            return npi == null ? null : accountsByNpi.get(npi);
         }
     }
 
@@ -334,81 +337,46 @@ public without sharing class ProviderMatcher {
     }
 
     /*
-     * Decides the outcome from the query results. By this point both keys are
-     * well formed (or null when not supplied).
+     * Decides the outcome for one row. Both keys are well formed (or null when
+     * not supplied); byUniqueId and byNpi are the Providers they identify, or null.
      *
-     * "accounts" is a superset of the real matches: the query filtered on the
-     * auto-number (Unique__c) OR the NPI, so it can contain:
-     *
-     *     - the Provider whose full Unique ID matches         -> the Unique ID match
-     *     - Providers sharing the auto-number but not the
-     *       Id suffix (i.e. a different full Unique ID)        -> not a match; ignored
-     *     - the Provider whose NPI matches                    -> the NPI match
-     *
-     * The same Provider may satisfy both keys; that is the normal, good case.
-     *
-     * Steps:
-     *     1. Sort the results into "matched by Unique ID" and "matched by NPI".
-     *     2. A supplied Unique ID must match, otherwise UNKNOWN_UNIQUE_ID
-     *        (even if the NPI matched something).
-     *     3. Combine both kinds of match into a set of distinct Providers:
-     *            0 -> NO_MATCH (only possible when no Unique ID was supplied)
-     *            2+ -> MULTIPLE_MATCHES (the keys point at different Providers)
-     *            1 -> continue
-     *     4. If the single Provider was found by Unique ID, its stored NPI may
-     *        still disagree with the input NPI -> KEY_MISMATCH. A blank stored
-     *        NPI is not a mismatch; the caller fills it in.
-     *     5. Otherwise UNIQUE_MATCH.
+     *     1. A supplied Unique ID must identify a Provider, otherwise
+     *        UNKNOWN_UNIQUE_ID (even if the NPI matched something).
+     *     2. The keys identify different Providers -> MULTIPLE_MATCHES.
+     *     3. Neither key identifies a Provider -> NO_MATCH (only possible
+     *        without a Unique ID, given step 1): the row is a new Provider.
+     *     4. The Provider was found by Unique ID, but the input NPI matched
+     *        nobody and differs from the Provider's stored NPI -> KEY_MISMATCH.
+     *        A blank stored NPI is not a mismatch; the caller fills it in.
+     *     5. Otherwise UNIQUE_MATCH. The same Provider matching both keys is the
+     *        normal, good case.
      */
-    private static AccountMatchResult evaluate(InnovAgeUniqueId uniqueId, String npi, List<Account> accounts) {
-        // Step 1: classify each returned Provider by which key(s) it actually matches.
-        Account uniqueIdAccount = null;
-        List<Account> npiAccounts = new List<Account>(); // at most one in practice: NPI__c is unique
-
-        for (Account account : accounts) {
-            // Full, case-sensitive comparison: sharing the auto-number is not enough.
-            if (uniqueId != null && uniqueId.isSameAs(account.InnovAge_Unique_ID__c)) {
-                uniqueIdAccount = account;
-            }
-            if (npi != null && npi.equals(account.NPI__c)) {
-                npiAccounts.add(account);
-            }
-        }
-
-        // Step 2: a supplied Unique ID is authoritative; if it identifies nobody, stop here.
-        if (uniqueId != null && uniqueIdAccount == null) {
+    private static AccountMatchResult evaluate(
+        InnovAgeUniqueId uniqueId,
+        String npi,
+        Account byUniqueId,
+        Account byNpi
+    ) {
+        if (uniqueId != null && byUniqueId == null) {
             return AccountMatchResult.error(
                 AccountMatchResult.Outcome.UNKNOWN_UNIQUE_ID,
                 'No Provider has the Unique ID "' + uniqueId.value + '".'
             );
         }
 
-        // Step 3: merge both kinds of match, keyed by record Id. A Provider matched by
-        // BOTH keys has one Id, so it lands in the map once, not twice; the map only
-        // grows past 1 when the keys lead to different records.
-        Map<Id, Account> matchedAccountsById = new Map<Id, Account>(npiAccounts);
-        if (uniqueIdAccount != null) {
-            matchedAccountsById.put(uniqueIdAccount.Id, uniqueIdAccount);
-        }
-
-        if (matchedAccountsById.size() > 1) {
+        if (byUniqueId != null && byNpi != null && byUniqueId.Id != byNpi.Id) {
             return AccountMatchResult.multipleMatches(
-                matchedAccountsById.values(),
-                'The Unique ID and NPI identify different Providers: ' +
-                String.join(new List<Id>(matchedAccountsById.keySet()), ', ') + '.'
+                new List<Account>{ byUniqueId, byNpi },
+                'The Unique ID and NPI identify different Providers: ' + byUniqueId.Id + ', ' + byNpi.Id + '.'
             );
         }
 
-        // Only reachable without a Unique ID (step 2 handled the other case): a new Provider.
-        if (matchedAccountsById.isEmpty()) {
+        Account matched = byUniqueId ?? byNpi;
+        if (matched == null) {
             return AccountMatchResult.noMatch();
         }
 
-        Account matched = matchedAccountsById.values()[0];
-
-        // Step 4: exactly one Provider. If it was found by Unique ID and the input also has
-        // an NPI that matched nobody, its stored NPI may differ. A Provider found by NPI
-        // trivially passes this check.
+        // A Provider found by NPI trivially passes this check.
         if (npi != null && String.isNotBlank(matched.NPI__c) && !npi.equals(matched.NPI__c)) {
             return AccountMatchResult.keyMismatch(
                 matched,
@@ -420,7 +388,6 @@ public without sharing class ProviderMatcher {
             );
         }
 
-        // Step 5: every supplied key agrees with this one Provider.
         return AccountMatchResult.uniqueMatch(matched);
     }
 }
