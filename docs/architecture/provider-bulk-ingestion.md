@@ -63,6 +63,7 @@ Values set in `start()` reach `execute()` only if the class implements
 
 | Component | Responsibility |
 |---|---|
+| `RosterIngestion__c` (display fields) | Shown on the RosterIngestion tab's list views and the record page header (compact layout). Provider Runs counts the roster's personnel-file Runs, and Last Provider Run is the latest of their start times. Both are roll-up summaries that Salesforce keeps current, so no code is involved. Personnel File Uploaded and Relationships File Uploaded are checkbox formulas. The files' names are not shown: the file fields hold a ContentDocument Id as text, which a formula cannot follow. |
 | `RosterIngestionRun__c` | One processing of one file version; a Master-Detail child of `RosterIngestion__c`. Holds the status, the pinned file version, Total Rows, the outcome counters and the batch job Id. |
 | `RosterIngestionIssue__c` | One error or warning for one CSV row; a Master-Detail child of the Run. |
 | `providerIngestionRuns` (LWC) | "Provider Ingestion Runs" panel on the RosterIngestion record page, below the Files panel. It has an *Ingest Providers* button (which asks for confirmation) and lists the roster's Provider Runs, showing "N of M rows". It polls every 3 s while a Run is active, and offers *Cancel* on an active Run. Each Run's name links to its record page. Only personnel-file Runs are listed, so a future relationships ingestion can have its own panel. |
