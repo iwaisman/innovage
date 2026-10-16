@@ -274,3 +274,29 @@ most Salesforce engineers already know.
 - `start()` took 9.7 s from start to finish.
 - Each slice used 0.5–0.6 s of CPU.
 
+## 12. Revision: dry run removed (2026-10-16)
+
+The dry-run option was removed from the code and the UI. It was useful in
+principle, but for this project it added a choice the user has to think about
+without serving their purpose. The goal is the simplest possible feature for
+end users and for maintainers.
+
+**Removed:**
+
+- The *Dry Run* and *Ingest This Version* buttons, the "Dry run" badge, and
+  the "would be inserted / updated" wording in the `rosterIngestionRuns`
+  component.
+- `RosterIngestionRunService.promote` and the controller's `promote`.
+- The `dryRun` parameter of `startRun`, `ProviderIngestionBatch` and
+  `ProviderIngestionService.ingestAll`, along with the savepoint and rollback
+  in `ingestAll`.
+- The `Dry_Run__c` field on the Run.
+- The three dry-run Runs in the `innovage` sandbox, which were all test runs
+  (their Issues were deleted with them).
+
+The *Ingest* button still asks for confirmation before starting, since a run
+creates and updates Providers.
+
+Sections 1–11 above still describe the dry run (section 6, and section 11's
+measurements); those are history.
+

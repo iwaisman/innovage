@@ -80,7 +80,7 @@ public with sharing class ProviderIngestionService {
         public String uniqueId { get; private set; }
         public String npi { get; private set; }
 
-        /** The Provider updated, matched, or inserted. Null for a dry-run insert, which was rolled back. */
+        /** The Provider updated, matched, or inserted. */
         public Id accountId { get; private set; }
 
         /** Why the row is an ERROR: an AccountMatchResult.Outcome name or one of this class's codes. */
@@ -132,39 +132,17 @@ public with sharing class ProviderIngestionService {
         if (csvRow == null) {
             throw new IllegalArgumentException('CSV row cannot be null.');
         }
-        return ingestAll(new List<RowInput>{ new RowInput(2, csvRow) }, false)[0];
+        return ingestAll(new List<RowInput>{ new RowInput(2, csvRow) })[0];
     }
 
     /**
      * Ingests many rows with one matching query and at most one insert and one update.
      *
-     * DRY RUN: when dryRun is true, the inserts and updates are really
-     * performed and then rolled back to a savepoint, so the results report
-     * exactly what a real run would do, including errors raised by validation
-     * rules, duplicate checks and Account flows/triggers. Caveats (team to review):
-     *
-     *   - Auto-numbers are consumed. Salesforce does not roll back auto-number
-     *     values, so every would-be insert advances Account.Unique__c and the
-     *     InnovAge Unique IDs issued afterwards skip those numbers. IDs stay
-     *     unique, but there are gaps.
-     *   - Not every side effect is transactional. Platform events published
-     *     with "Publish Immediately" by Account automation are delivered even
-     *     though the save is rolled back. Emails, enqueued jobs and other DML
-     *     are rolled back. Check Account automation before relying on dry runs.
-     *   - A dry run costs as much CPU and time as a real run, because the same
-     *     triggers and flows execute.
-     *   - Rows of later calls (slices) do not see Providers inserted by earlier
-     *     calls, since those were rolled back. A row for a Provider that an
-     *     earlier slice would insert is reported as another insert, where a
-     *     real run would update it (see DUPLICATES above).
-     *   - The savepoint and the rollback each count as one DML statement.
-     *
      * @param rows The rows to ingest, in file order
-     * @param dryRun true to roll back all Provider changes (see above)
      * @return One result per row, in the same order
      * @throws IllegalArgumentException if rows is null, or a row has no values
      */
-    public static List<IngestResult> ingestAll(List<RowInput> rows, Boolean dryRun) {
+    public static List<IngestResult> ingestAll(List<RowInput> rows) {
         if (rows == null) {
             throw new IllegalArgumentException('Rows cannot be null.');
         }
@@ -194,7 +172,7 @@ public with sharing class ProviderIngestionService {
             planRow(results[i], mappedRows[i], matches[i], saves);
         }
 
-        saves.execute(dryRun == true);
+        saves.execute();
         return results;
     }
 
@@ -305,29 +283,21 @@ public with sharing class ProviderIngestionService {
             updateResultsById.get(accountId).add(result);
         }
 
-        void execute(Boolean dryRun) {
+        void execute() {
             if (inserts.isEmpty() && updatesById.isEmpty()) {
                 return;
             }
             List<Account> updates = updatesById.values();
 
-            // See the DRY RUN notes on ingestAll() before changing this.
-            Savepoint beforeSaves = dryRun ? Database.setSavepoint() : null;
-            try {
-                List<Database.SaveResult> insertSaveResults = Database.insert(inserts, false, AccessLevel.SYSTEM_MODE);
-                List<Database.SaveResult> updateSaveResults = Database.update(updates, false, AccessLevel.SYSTEM_MODE);
+            List<Database.SaveResult> insertSaveResults = Database.insert(inserts, false, AccessLevel.SYSTEM_MODE);
+            List<Database.SaveResult> updateSaveResults = Database.update(updates, false, AccessLevel.SYSTEM_MODE);
 
-                for (Integer i = 0; i < insertSaveResults.size(); i++) {
-                    applySaveResult(insertSaveResults[i], Outcome.INSERTED, insertResults[i], dryRun);
-                }
-                for (Integer i = 0; i < updateSaveResults.size(); i++) {
-                    for (IngestResult result : updateResultsById.get(updates[i].Id)) {
-                        applySaveResult(updateSaveResults[i], Outcome.UPDATED, result, dryRun);
-                    }
-                }
-            } finally {
-                if (dryRun) {
-                    Database.rollback(beforeSaves);
+            for (Integer i = 0; i < insertSaveResults.size(); i++) {
+                applySaveResult(insertSaveResults[i], Outcome.INSERTED, insertResults[i]);
+            }
+            for (Integer i = 0; i < updateSaveResults.size(); i++) {
+                for (IngestResult result : updateResultsById.get(updates[i].Id)) {
+                    applySaveResult(updateSaveResults[i], Outcome.UPDATED, result);
                 }
             }
         }
@@ -336,13 +306,11 @@ public with sharing class ProviderIngestionService {
     private static void applySaveResult(
         Database.SaveResult saveResult,
         Outcome successOutcome,
-        IngestResult result,
-        Boolean dryRun
+        IngestResult result
     ) {
         if (saveResult.isSuccess()) {
             result.outcome = successOutcome;
-            // A dry-run insert was rolled back; its Id refers to nothing.
-            result.accountId = dryRun && successOutcome == Outcome.INSERTED ? null : saveResult.getId();
+            result.accountId = saveResult.getId();
             return;
         }
 

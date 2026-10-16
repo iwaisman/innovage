@@ -3,7 +3,7 @@
     <apiVersion>67.0</apiVersion>
     <isExposed>true</isExposed>
     <masterLabel>Roster Ingestion Runs</masterLabel>
-    <description>Ingest the personnel file of a Roster Ingestion (or dry-run it) and follow each run's progress and results.</description>
+    <description>Ingest the personnel file of a Roster Ingestion and follow each run's progress and results.</description>
     <targets>
         <target>lightning__RecordPage</target>
     </targets>

@@ -1,0 +1,11 @@
+# Salesforce Code Analyzer configuration (sf code-analyzer run).
+#
+# Every rule is left enabled on purpose, including the noisy style rules, so
+# that their findings stay visible. Only engines that cannot apply to this
+# project are turned off.
+
+engines:
+  # The Flow engine scans Flows and needs Python 3.10+. This project has no
+  # Flows, so the engine would only report that it could not start.
+  flow:
+    disable_engine: true

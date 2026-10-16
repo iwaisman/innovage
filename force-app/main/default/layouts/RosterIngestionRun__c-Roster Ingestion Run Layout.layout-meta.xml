@@ -20,10 +20,6 @@
             </layoutItems>
             <layoutItems>
                 <behavior>Readonly</behavior>
-                <field>Dry_Run__c</field>
-            </layoutItems>
-            <layoutItems>
-                <behavior>Readonly</behavior>
                 <field>File_Type__c</field>
             </layoutItems>
         </layoutColumns>
@@ -143,7 +139,6 @@
     </layoutSections>
     <miniLayout>
         <fields>Status__c</fields>
-        <fields>Dry_Run__c</fields>
         <fields>Rows_Processed__c</fields>
         <fields>Errored__c</fields>
     </miniLayout>

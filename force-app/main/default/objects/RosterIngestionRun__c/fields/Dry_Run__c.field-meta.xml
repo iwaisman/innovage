@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
-    <fullName>Dry_Run__c</fullName>
-    <description>Provider changes were rolled back; counts and issues show what a real run would do.</description>
-    <label>Dry Run</label>
-    <defaultValue>false</defaultValue>
-    <type>Checkbox</type>
-</CustomField>

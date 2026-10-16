@@ -20,8 +20,7 @@ not be ingested.
 
 Each processing of a file is recorded as a **Run** (`RosterIngestionRun__c`).
 Every error or warning found is recorded as an **Issue**
-(`RosterIngestionIssue__c`). A Run can be a **dry run**, which reports what
-would happen without changing any Provider.
+(`RosterIngestionIssue__c`).
 
 The work is done by a **Batch Apex** job (`ProviderIngestionBatch`). Files are
 limited to **5,000 rows**.
@@ -49,10 +48,10 @@ Values set in `start()` reach `execute()` only if the class implements
 
 | Class | Responsibility |
 |---|---|
-| `RosterIngestionRunController` | `@AuraEnabled` entry points for the LWC: list Runs, start, promote, cancel. Converts `RunException` into `AuraHandledException`. |
-| `RosterIngestionRunService` | The user actions: start a Run (pin the file version, create the Run, launch the batch), promote a dry run, cancel. Also holds the shared constants, `finish()` (set a Run's final status), and `failAbandonedRuns()`. |
+| `RosterIngestionRunController` | `@AuraEnabled` entry points for the LWC: list Runs, start, cancel. Converts `RunException` into `AuraHandledException`. |
+| `RosterIngestionRunService` | The user actions: start a Run (pin the file version, create the Run, launch the batch), cancel. Also holds the shared constants, `finish()` (set a Run's final status), and `failAbandonedRuns()`. |
 | `ProviderIngestionBatch` | The processing. `start()` loads and parses the whole file; `execute()` ingests one slice of rows and records Issues and counts; `finish()` sets the final status. |
-| `ProviderIngestionService` | Row logic. `ingestAll(rows, dryRun)`: maps the rows, matches them against existing Providers, and performs the inserts and updates. `ingest(row)` is the single-row form. |
+| `ProviderIngestionService` | Row logic. `ingestAll(rows)`: maps the rows, matches them against existing Providers, and performs the inserts and updates. `ingest(row)` is the single-row form. |
 | `ProviderCsvMapping` | Maps CSV headers to Account fields. Validates and normalizes values (phone, email, dates, SSN, NPI, state, ZIP) and defines each field's update policy (OVERWRITE, FILL_IF_BLANK, INSERT_ONLY). Invalid values are dropped as warnings. |
 | `ProviderMatcher` | `matchAll(requests)`: finds the existing Provider for each row by Unique ID and/or NPI, with **one** query for all rows. |
 | `AccountMatchResult` | The outcome of matching one row: UNIQUE_MATCH, NO_MATCH, or an error outcome. |
@@ -65,20 +64,20 @@ Values set in `start()` reach `execute()` only if the class implements
 |---|---|
 | `RosterIngestionRun__c` | One processing of one file version; a Master-Detail child of `RosterIngestion__c`. Holds the status, the pinned file version, Total Rows, the outcome counters and the batch job Id. |
 | `RosterIngestionIssue__c` | One error or warning for one CSV row; a Master-Detail child of the Run. |
-| `rosterIngestionRuns` (LWC) | Panel on the RosterIngestion record page with *Dry Run* and *Ingest* buttons and a list of Runs, showing "N of M rows". It polls every 3 s while a Run is active, and offers *Ingest This Version* on a finished dry run and *Cancel* on an active Run. |
+| `rosterIngestionRuns` (LWC) | Panel on the RosterIngestion record page with an *Ingest* button (which asks for confirmation) and a list of Runs, showing "N of M rows". It polls every 3 s while a Run is active, and offers *Cancel* on an active Run. |
 | `Roster_Ingestion_Files` (permission set) | Grants Read on Runs and Issues and their fields, Read/Edit on RosterIngestion, and access to the controllers. |
 
 ## 4. How the classes relate
 
 ```mermaid
 flowchart TD
-    LWC["rosterIngestionRuns (LWC)"] -->|getRuns / startRun / promote / cancel| CTRL[RosterIngestionRunController]
+    LWC["rosterIngestionRuns (LWC)"] -->|getRuns / startRun / cancel| CTRL[RosterIngestionRunController]
     CTRL --> RUN[RosterIngestionRunService]
     RUN -->|Database.executeBatch| BATCH[ProviderIngestionBatch]
     BATCH -->|finish / constants| RUN
 
     BATCH -->|"start(): parse"| CSV[CsvParser]
-    BATCH -->|"execute(): ingestAll(rows, dryRun)"| SVC[ProviderIngestionService]
+    BATCH -->|"execute(): ingestAll(rows)"| SVC[ProviderIngestionService]
     SVC -->|mapRow| MAP[ProviderCsvMapping]
     SVC -->|matchAll| MATCH[ProviderMatcher]
     MATCH --> UID[InnovAgeUniqueId]
@@ -104,7 +103,7 @@ The layers have clear boundaries:
 
 ### 5.1 Starting (synchronous, in the user's request)
 
-`RosterIngestionRunService.startRun(rosterIngestionId, dryRun)`:
+`RosterIngestionRunService.startRun(rosterIngestionId)`:
 
 1. Checks that the user can **edit** the roster (`UserRecordAccess`), then
    locks the roster row (`FOR UPDATE`) for the rest of this transaction.
@@ -120,9 +119,6 @@ The layers have clear boundaries:
 5. Launches `ProviderIngestionBatch` with `Database.executeBatch(..., 200)` and
    stores the job Id on the Run.
 
-`promote(dryRunId)` does the same for a completed dry run, but pins the dry
-run's **exact file version** rather than the latest one, and starts a real Run.
-
 ### 5.2 Processing (asynchronous, Batch Apex)
 
 ```mermaid
@@ -136,7 +132,7 @@ sequenceDiagram
     B-->>SF: list of rows (row number + values)
     loop each slice of 200 rows, one at a time
         SF->>B: execute(slice)
-        B->>S: ingestAll(rows, dryRun)
+        B->>S: ingestAll(rows)
         S-->>B: one IngestResult per row
         B->>B: insert Issues, add counts to the Run
     end
@@ -165,7 +161,7 @@ slice runs.
 1. Locks the Run. If it is no longer Running (it was cancelled), does nothing.
 2. Turns each row into a header → value map. A row with the wrong number of
    columns becomes a COLUMN_COUNT Issue instead.
-3. Calls `ProviderIngestionService.ingestAll(rows, dryRun)`.
+3. Calls `ProviderIngestionService.ingestAll(rows)`.
 4. Turns each result into counter increments (Rows Processed, Inserted,
    Updated, Unchanged, Errored, Rows With Warnings) and Issues: one Error Issue
    per error, and one Warning Issue per dropped value.
@@ -187,7 +183,7 @@ All of a slice's work commits together, or not at all.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Queued: startRun / promote
+    [*] --> Queued: startRun
     Queued --> Running: start() begins
     Queued --> Cancelled: cancel
     Running --> Completed: finish(), all rows processed, none errored
@@ -246,30 +242,9 @@ What happens depends on whether the duplicate rows land in the same slice:
 | The job dies where the batch can't record it (e.g. a governor limit in `start()`) | `RosterIngestionRunService.failAbandonedRuns` | The Run would stay Queued or Running. Whenever runs are listed, and before a new Run starts, any active Run whose batch job has ended (Completed, Failed or Aborted) is marked **Failed**, with the job's error. |
 | User cancels | `RosterIngestionRunService.cancel` | The Run is marked **Cancelled** and the batch job is aborted. A slice already in progress still commits; later slices find the Run cancelled and do nothing. |
 
-## 8. Dry run and promote
+## 8. Access and security
 
-A dry run is an ordinary Run with `Dry_Run__c = true`. In `ingestAll` the
-inserts and updates really run, inside a savepoint that is then rolled back.
-The Issues and counters are written afterwards, so they are kept. This catches
-everything a real run would, including validation rules, the unique-NPI
-constraint and failures in Account flows.
-
-The caveats are documented on `ProviderIngestionService.ingestAll`:
-
-- **Auto-numbers are used up.** Every would-be insert advances `Unique__c`, so
-  dry runs leave gaps in Provider Unique IDs.
-- **Some side effects survive the rollback.** Platform events published with
-  "Publish Immediately" by Account automation are still delivered.
-- **Cost.** A dry run costs as much as a real run.
-- **Duplicates across slices.** A later slice cannot see Providers an earlier
-  slice "inserted", so it reports another insert where a real run would update.
-
-*Ingest This Version* (`promote`) starts a real Run pinned to the dry run's
-file version, so the real run processes exactly the file that was reviewed.
-
-## 9. Access and security
-
-- Starting, promoting and cancelling check that the user can edit the roster.
+- Starting and cancelling check that the user can edit the roster.
   After that, Runs and Issues are written in **system mode**.
 - `ProviderMatcher` is `without sharing` and queries in system mode, and
   Provider DML runs in system mode. Ingestion must see and write every Provider
@@ -282,7 +257,7 @@ file version, so the real run processes exactly the file that was reviewed.
 - Issue messages never contain field values. Sensitive values such as SSN and
   date of birth never appear in them.
 
-## 10. Limits and measurements
+## 9. Limits and measurements
 
 | Setting | Value | Where |
 |---|---|---|
@@ -292,7 +267,7 @@ file version, so the real run processes exactly the file that was reviewed.
 | Encoding | UTF-8 only | `ProviderIngestionBatch.loadFile` |
 | Row numbers | Spreadsheet rows, with the header as row 1 | `ProviderIngestionBatch.start` |
 
-Measured in the `innovage` sandbox (2026-10-15), with a 5,000-row dry run:
+Measured in the `innovage` sandbox (2026-10-15), with a 5,000-row run:
 
 - **Whole run:** 3½ minutes, in 25 slices.
 - **`start()`** (load and parse 5,000 rows): 9.7 s from start to finish.
@@ -301,7 +276,7 @@ Measured in the `innovage` sandbox (2026-10-15), with a 5,000-row dry run:
   roughly 1.7 MB of text plus 3.1 MB of parsed rows.
 - **Each slice:** 0.5–0.6 s of CPU per 200 rows.
 
-## 11. Testing
+## 10. Testing
 
 - A test can run only **one** `execute()` of a real batch job. The tests in
   `RosterIngestionRunServiceTest` therefore drive the batch directly:

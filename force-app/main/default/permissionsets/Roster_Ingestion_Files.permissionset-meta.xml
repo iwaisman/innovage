@@ -68,11 +68,6 @@
     </fieldPermissions>
     <fieldPermissions>
         <editable>false</editable>
-        <field>RosterIngestionRun__c.Dry_Run__c</field>
-        <readable>true</readable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <editable>false</editable>
         <field>RosterIngestionRun__c.Errored__c</field>
         <readable>true</readable>
     </fieldPermissions>

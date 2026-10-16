@@ -4,12 +4,10 @@ import { ShowToastEvent } from 'lightning/platformShowToastEvent';
 import LightningConfirm from 'lightning/confirm';
 import getRuns from '@salesforce/apex/RosterIngestionRunController.getRuns';
 import startRun from '@salesforce/apex/RosterIngestionRunController.startRun';
-import promote from '@salesforce/apex/RosterIngestionRunController.promote';
 import cancel from '@salesforce/apex/RosterIngestionRunController.cancel';
 
 // Status values must match RosterIngestionRunService.STATUS_*
 const ACTIVE_STATUSES = new Set(['Queued', 'Running']);
-const PROMOTABLE_STATUSES = new Set(['Completed', 'Completed with Errors']);
 const STATUS_CLASSES = {
     Completed: 'slds-theme_success',
     'Completed with Errors': 'slds-theme_warning',
@@ -52,7 +50,6 @@ export default class RosterIngestionRuns extends NavigationMixin(LightningElemen
         return this.runs.map((run) => ({
             ...run,
             isActive: ACTIVE_STATUSES.has(run.Status__c),
-            canPromote: run.Dry_Run__c && PROMOTABLE_STATUSES.has(run.Status__c),
             statusClass: STATUS_CLASSES[run.Status__c] ?? '',
             summary: summarize(run)
         }));
@@ -73,20 +70,11 @@ export default class RosterIngestionRuns extends NavigationMixin(LightningElemen
         this.pollTimer = undefined;
     }
 
-    async handleStart(event) {
-        const dryRun = event.currentTarget.dataset.dryRun === 'true';
-        if (!dryRun && !(await confirmIngest('Ingest the latest version of the personnel file? Providers will be created and updated.'))) {
+    async handleStart() {
+        if (!(await confirmIngest('Ingest the latest version of the personnel file? Providers will be created and updated.'))) {
             return;
         }
-        await this.act(() => startRun({ recordId: this.recordId, dryRun }), dryRun ? 'Dry run started.' : 'Ingestion started.');
-    }
-
-    async handlePromote(event) {
-        const runId = event.currentTarget.dataset.id;
-        if (!(await confirmIngest('Ingest the exact file version this dry run checked? Providers will be created and updated.'))) {
-            return;
-        }
-        await this.act(() => promote({ runId }), 'Ingestion started.');
+        await this.act(() => startRun({ recordId: this.recordId }), 'Ingestion started.');
     }
 
     async handleCancel(event) {
@@ -121,11 +109,10 @@ export default class RosterIngestionRuns extends NavigationMixin(LightningElemen
 }
 
 function summarize(run) {
-    const would = run.Dry_Run__c ? 'would be ' : '';
     return [
         run.Total_Rows__c == null ? `${run.Rows_Processed__c ?? 0} rows` : `${run.Rows_Processed__c ?? 0} of ${run.Total_Rows__c} rows`,
-        `${run.Inserted__c ?? 0} ${would}inserted`,
-        `${run.Updated__c ?? 0} ${would}updated`,
+        `${run.Inserted__c ?? 0} inserted`,
+        `${run.Updated__c ?? 0} updated`,
         `${run.Unchanged__c ?? 0} unchanged`,
         `${run.Errored__c ?? 0} with errors`,
         `${run.Rows_With_Warnings__c ?? 0} with warnings`
