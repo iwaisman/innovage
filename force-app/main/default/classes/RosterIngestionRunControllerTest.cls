@@ -21,17 +21,53 @@ private class RosterIngestionRunControllerTest {
     }
 
     @IsTest
-    static void shouldListRuns_WhenRunStarted() {
+    static void shouldReturnActiveRun_WhenRunQueued() {
+        System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
+            Id runId = RosterIngestionRunController.startRun(rosterId());
+
+            Test.startTest();
+            RosterIngestionRun__c active = RosterIngestionRunController.getActiveRun(rosterId());
+            Test.stopTest();
+
+            Assert.areEqual(runId, active?.Id, 'The queued run is active');
+            Assert.areEqual(RosterIngestionRunService.STATUS_QUEUED, active.Status__c, 'Not started yet');
+        }
+    }
+
+    @IsTest
+    static void shouldReturnNoActiveRun_WhenRunFinished() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Test.startTest();
             Id runId = RosterIngestionRunController.startRun(rosterId());
             Test.stopTest();
 
-            List<RosterIngestionRun__c> runs = RosterIngestionRunController.getRuns(rosterId());
-            Assert.areEqual(1, runs.size(), 'One run');
-            Assert.areEqual(runId, runs[0].Id, 'The started run');
-            Assert.areEqual(RosterIngestionRunService.STATUS_COMPLETED, runs[0].Status__c, 'Job completed it: ' + runs[0].Failure_Message__c);
-            Assert.areEqual(1, runs[0].Inserted__c, 'Inserted one Provider');
+            Assert.isNull(RosterIngestionRunController.getActiveRun(rosterId()), 'A finished run is not active');
+            RosterIngestionRun__c run = [SELECT Status__c, Inserted__c FROM RosterIngestionRun__c WHERE Id = :runId];
+            Assert.areEqual(RosterIngestionRunService.STATUS_COMPLETED, run.Status__c, 'Job completed it');
+            Assert.areEqual(1, run.Inserted__c, 'Inserted one Provider');
+        }
+    }
+
+    @IsTest
+    static void shouldFailStuckRun_WhenActiveRunRequested() {
+        System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
+            Test.startTest();
+            Id runId = RosterIngestionRunController.startRun(rosterId());
+            Test.stopTest();
+            // As if the batch job had died without recording it.
+            Database.update(
+                new RosterIngestionRun__c(Id = runId, Status__c = RosterIngestionRunService.STATUS_RUNNING),
+                AccessLevel.SYSTEM_MODE
+            );
+
+            RosterIngestionRun__c active = RosterIngestionRunController.getActiveRun(rosterId());
+
+            Assert.isNull(active, 'The stuck run is no longer shown as active');
+            Assert.areEqual(
+                RosterIngestionRunService.STATUS_FAILED,
+                [SELECT Status__c FROM RosterIngestionRun__c WHERE Id = :runId].Status__c,
+                'The stuck run was marked failed'
+            );
         }
     }
 

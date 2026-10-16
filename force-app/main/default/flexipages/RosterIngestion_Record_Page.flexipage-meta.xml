@@ -133,6 +133,90 @@
                 <identifier>c_providerIngestionRuns</identifier>
             </componentInstance>
         </itemInstances>
+        <itemInstances>
+            <componentInstance>
+                <componentInstanceProperties>
+                    <name>adminFilters</name>
+                    <valueList>
+                        <valueListItems>
+                            <value>File_Type__c|EQUALS|[&quot;Personnel&quot;]</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>Status__c|EQUALS|[&quot;Completed&quot;,&quot;Completed with Errors&quot;,&quot;Failed&quot;,&quot;Cancelled&quot;]</value>
+                        </valueListItems>
+                    </valueList>
+                </componentInstanceProperties>
+                <componentInstanceProperties>
+                    <name>maxRecordsToDisplay</name>
+                    <value>10</value>
+                </componentInstanceProperties>
+                <componentInstanceProperties>
+                    <name>parentFieldApiName</name>
+                    <value>RosterIngestion__c.Id</value>
+                </componentInstanceProperties>
+                <componentInstanceProperties>
+                    <name>relatedListApiName</name>
+                    <value>Runs__r</value>
+                </componentInstanceProperties>
+                <componentInstanceProperties>
+                    <name>relatedListDisplayType</name>
+                    <value>ADVGRID</value>
+                </componentInstanceProperties>
+                <componentInstanceProperties>
+                    <name>relatedListFieldAliases</name>
+                    <valueList>
+                        <valueListItems>
+                            <value>NAME</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>Status__c</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>Started_At__c</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>Total_Rows__c</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>Rows_Processed__c</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>Inserted__c</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>Updated__c</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>Errored__c</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>Rows_With_Warnings__c</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>Failure_Message__c</value>
+                        </valueListItems>
+                    </valueList>
+                </componentInstanceProperties>
+                <componentInstanceProperties>
+                    <name>relatedListLabel</name>
+                    <value>Provider Ingestion Runs</value>
+                </componentInstanceProperties>
+                <componentInstanceProperties>
+                    <name>showActionBar</name>
+                    <value>false</value>
+                </componentInstanceProperties>
+                <componentInstanceProperties>
+                    <name>sortFieldAlias</name>
+                    <value>Started_At__c</value>
+                </componentInstanceProperties>
+                <componentInstanceProperties>
+                    <name>sortFieldOrder</name>
+                    <value>Descending</value>
+                </componentInstanceProperties>
+                <componentName>lst:dynamicRelatedList</componentName>
+                <identifier>lst_dynamicRelatedList_providerRuns</identifier>
+            </componentInstance>
+        </itemInstances>
         <mode>Replace</mode>
         <name>main</name>
         <type>Region</type>

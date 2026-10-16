@@ -2,8 +2,8 @@
 <LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">
     <apiVersion>67.0</apiVersion>
     <isExposed>true</isExposed>
-    <masterLabel>Provider Ingestion Runs</masterLabel>
-    <description>Ingest Providers from the personnel file of a Roster Ingestion and follow each run's progress and results.</description>
+    <masterLabel>Provider Ingestion</masterLabel>
+    <description>Start or cancel a Provider ingestion of the roster's personnel file and follow the active run's progress. Finished runs are listed by a standard related list.</description>
     <targets>
         <target>lightning__RecordPage</target>
     </targets>
