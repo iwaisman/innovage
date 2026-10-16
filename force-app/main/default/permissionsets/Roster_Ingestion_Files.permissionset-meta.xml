@@ -8,6 +8,10 @@
         <enabled>true</enabled>
     </classAccesses>
     <classAccesses>
+        <apexClass>RosterIngestionIssueController</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
         <apexClass>RosterIngestionRunController</apexClass>
         <enabled>true</enabled>
     </classAccesses>

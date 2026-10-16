@@ -1,12 +1,14 @@
 /**
- * Backs the rosterIngestionRuns LWC: lists a roster's Runs, starts them and
- * cancels them. Issues are shown on the Run record page.
+ * Backs the providerIngestionRuns LWC: lists a roster's Provider (personnel
+ * file) Runs, starts them and cancels them. Issues are shown on the Run record
+ * page, by the rosterIngestionIssues LWC.
  */
 public with sharing class RosterIngestionRunController {
 
     /**
      * @param recordId A RosterIngestion__c Id
-     * @return Its Runs, newest first
+     * @return Its Provider (personnel file) Runs, newest first. Runs of other
+     *         file types, such as a future relationships ingestion, are not listed.
      */
     @AuraEnabled
     public static List<RosterIngestionRun__c> getRuns(Id recordId) {
@@ -18,6 +20,7 @@ public with sharing class RosterIngestionRunController {
                     Unchanged__c, Errored__c, Rows_With_Warnings__c, Failure_Message__c
                 FROM RosterIngestionRun__c
                 WHERE RosterIngestion__c = :recordId
+                    AND File_Type__c = :RosterIngestionRunService.FILE_TYPE_PERSONNEL
                 WITH USER_MODE
                 ORDER BY CreatedDate DESC
                 LIMIT 50

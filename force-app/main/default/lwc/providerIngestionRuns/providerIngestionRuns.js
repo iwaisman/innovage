@@ -15,7 +15,7 @@ const STATUS_CLASSES = {
 };
 const POLL_INTERVAL_MS = 3000;
 
-export default class RosterIngestionRuns extends NavigationMixin(LightningElement) {
+export default class ProviderIngestionRuns extends NavigationMixin(LightningElement) {
     @api recordId;
 
     runs = [];

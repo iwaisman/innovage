@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <actionOverrides>
+        <actionName>View</actionName>
+        <content>RosterIngestionRun_Record_Page</content>
+        <formFactor>Large</formFactor>
+        <skipRecordTypeSelect>false</skipRecordTypeSelect>
+        <type>Flexipage</type>
+    </actionOverrides>
     <deploymentStatus>Deployed</deploymentStatus>
     <description>The Roster Ingestion Run object records one processing of a roster file version, as a child of Roster Ingestion. It captures File Type, the pinned file version, Status (Queued to Completed or Failed) and row outcome counts. Commonly used for reviewing ingestion results.</description>
     <enableReports>true</enableReports>
