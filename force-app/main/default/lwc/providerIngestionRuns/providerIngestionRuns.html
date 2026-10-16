@@ -1,7 +1,7 @@
 <template>
-    <lightning-card title="Ingestion Runs" icon-name="standard:data_streams">
+    <lightning-card title="Provider Ingestion Runs" icon-name="standard:data_streams">
         <div slot="actions">
-            <lightning-button label="Ingest" icon-name="utility:upload" variant="brand" disabled={busy} onclick={handleStart}></lightning-button>
+            <lightning-button label="Ingest Providers" icon-name="utility:upload" variant="brand" disabled={busy} onclick={handleStart}></lightning-button>
             <lightning-button-icon
                 class="slds-var-m-left_x-small"
                 icon-name="utility:refresh"
@@ -52,7 +52,7 @@
             </template>
             <template lwc:else>
                 <p class="slds-text-color_weak slds-var-m-bottom_small">
-                    No runs yet. Ingest creates and updates Providers from the latest personnel file.
+                    No runs yet. Ingest Providers creates and updates Providers from the latest personnel file.
                 </p>
             </template>
         </div>

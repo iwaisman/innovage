@@ -129,8 +129,8 @@
         </itemInstances>
         <itemInstances>
             <componentInstance>
-                <componentName>rosterIngestionRuns</componentName>
-                <identifier>c_rosterIngestionRuns</identifier>
+                <componentName>providerIngestionRuns</componentName>
+                <identifier>c_providerIngestionRuns</identifier>
             </componentInstance>
         </itemInstances>
         <mode>Replace</mode>
