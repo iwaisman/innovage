@@ -1,7 +1,7 @@
 /**
  * Backs the providerIngestionRuns LWC: lists a roster's Provider (personnel
  * file) Runs, starts them and cancels them. Issues are shown on the Run record
- * page, by the rosterIngestionIssues LWC.
+ * page, in standard Errors and Warnings related lists.
  */
 public with sharing class RosterIngestionRunController {
 
