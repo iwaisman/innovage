@@ -5,12 +5,13 @@ private class RosterIngestionRunServiceTest {
     private static final String EXISTING = 'RunExisting';
     private static final Integer NEW_NPI = 10;
     private static final Integer WARNING_NPI = 11;
+    private static final String UNKNOWN_UNIQUE_ID = 'P999999999zzz';
 
     /*
      * The personnel file used by most tests (spreadsheet rows; header is row 1):
      *   2: new Provider              -> INSERTED
      *   3: existing Provider, phone  -> UPDATED
-     *   4: same NPI as row 2         -> ERROR DUPLICATE_IN_FILE
+     *   4: unknown Unique ID         -> ERROR UNKNOWN_UNIQUE_ID
      *   5: new Provider, bad email   -> INSERTED + WARNING
      *   6: one column only           -> ERROR COLUMN_COUNT
      */
@@ -43,13 +44,15 @@ private class RosterIngestionRunServiceTest {
             'Provider Phone' => '720-555-0166'
         };
 
+        Map<String, String> unknown = new Map<String, String>{ ProviderCsvMapping.UNIQUE_ID_HEADER => UNKNOWN_UNIQUE_ID };
+
         Map<String, String> withWarning = template.clone();
         withWarning.put(ProviderCsvMapping.NPI_HEADER, ProviderTestDataFactory.npi(WARNING_NPI));
         withWarning.put('Last Name', 'RunNew2');
         withWarning.put('Provider Email', 'not-an-email');
 
         return ProviderTestDataFactory.toCsv(headers, new List<Map<String, String>>{
-            newProvider, updateRow, newProvider, withWarning
+            newProvider, updateRow, unknown, withWarning
         }) + '"only one column"\r\n';
     }
 
@@ -60,30 +63,45 @@ private class RosterIngestionRunServiceTest {
     private static RosterIngestionRun__c reload(Id runId) {
         return [
             SELECT Id, Status__c, Dry_Run__c, Content_Version_Id__c, Version_Number__c, Failure_Message__c,
-                Rows_Processed__c, Inserted__c, Updated__c, Unchanged__c, Errored__c, Rows_With_Warnings__c,
-                Chunk_Size__c, Chunk_Count__c, Next_Row_Number__c, Started_At__c, Completed_At__c
+                Total_Rows__c, Rows_Processed__c, Inserted__c, Updated__c, Unchanged__c, Errored__c,
+                Rows_With_Warnings__c, Started_At__c, Completed_At__c
             FROM RosterIngestionRun__c
             WHERE Id = :runId
         ];
     }
 
     /*
-     * Drives the chain the way ProviderIngestionJob does; chaining is disabled in tests.
+     * Runs ProviderIngestionBatch the way Salesforce does (start, execute per
+     * slice, finish), but directly: a test may run only one execute() of a real
+     * batch job. Slices listed in skippedSlices are not executed, as if they had
+     * failed. The job queued by startRun() still runs at Test.stopTest(), finds the
+     * Run already finished and does nothing.
      */
-    private static void runToCompletion(Id runId, Integer chunkSize) {
-        // Internal field; users can only read it.
-        Database.update(new RosterIngestionRun__c(Id = runId, Chunk_Size__c = chunkSize), AccessLevel.SYSTEM_MODE);
-        ProviderIngestionService.DuplicateTracker tracker = new ProviderIngestionService.DuplicateTracker();
-        for (Integer i = 0; i < 20; i++) {
-            if (RosterIngestionRunService.processChunk(runId, tracker) != RosterIngestionRunService.ChunkOutcome.MORE) {
-                return;
+    private static void runToCompletion(Id runId, Integer sliceSize, Set<Integer> skippedSlices) {
+        Boolean dryRun = [SELECT Dry_Run__c FROM RosterIngestionRun__c WHERE Id = :runId].Dry_Run__c;
+        ProviderIngestionBatch batch = new ProviderIngestionBatch(runId, dryRun);
+
+        List<ProviderIngestionBatch.RowItem> rows = (List<ProviderIngestionBatch.RowItem>) batch.start(null);
+        Integer sliceCount = (rows.size() + sliceSize - 1) / sliceSize;
+        for (Integer slice = 0; slice < sliceCount; slice++) {
+            List<ProviderIngestionBatch.RowItem> scope = new List<ProviderIngestionBatch.RowItem>();
+            for (Integer i = slice * sliceSize; i < Math.min((slice + 1) * sliceSize, rows.size()); i++) {
+                scope.add(rows[i]);
+            }
+            if (!skippedSlices.contains(slice)) {
+                batch.execute(null, scope);
             }
         }
-        Assert.fail('Run did not complete');
+        batch.finish(null);
+    }
+
+    private static void runToCompletion(Id runId, Integer sliceSize) {
+        runToCompletion(runId, sliceSize, new Set<Integer>());
     }
 
     private static void assertStandardCounts(RosterIngestionRun__c run) {
         Assert.areEqual(RosterIngestionRunService.STATUS_COMPLETED_WITH_ERRORS, run.Status__c, 'Failure: ' + run.Failure_Message__c);
+        Assert.areEqual(ROWS, run.Total_Rows__c, 'Total rows');
         Assert.areEqual(ROWS, run.Rows_Processed__c, 'Rows processed');
         Assert.areEqual(INSERTED, run.Inserted__c, 'Inserted');
         Assert.areEqual(UPDATED, run.Updated__c, 'Updated');
@@ -96,15 +114,13 @@ private class RosterIngestionRunServiceTest {
     // ─── Whole runs ────────────────────────────────────────────────────
 
     @IsTest
-    static void shouldCompleteRun_WhenJobProcessesFile() {
+    static void shouldCompleteRun_WhenBatchProcessesFile() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Test.startTest();
             Id runId = RosterIngestionRunService.startRun(roster().Id, false);
             Test.stopTest();
 
-            RosterIngestionRun__c run = reload(runId);
-            assertStandardCounts(run);
-            Assert.areEqual(1, run.Chunk_Count__c, 'Small file fits in one chunk');
+            assertStandardCounts(reload(runId));
             Assert.areEqual(INSERTED, [SELECT COUNT() FROM Account WHERE LastName LIKE 'RunNew%'], 'Providers inserted');
             Assert.areEqual('(720) 555-0166', [SELECT Phone FROM Account WHERE LastName = :EXISTING].Phone, 'Provider updated');
         }
@@ -116,12 +132,12 @@ private class RosterIngestionRunServiceTest {
             Id runId = RosterIngestionRunService.startRun(roster().Id, false);
 
             Test.startTest();
-            runToCompletion(runId, 500);
+            runToCompletion(runId, RosterIngestionRunService.BATCH_SIZE);
             Test.stopTest();
 
             Map<Integer, RosterIngestionIssue__c> issuesByRow = new Map<Integer, RosterIngestionIssue__c>();
             for (RosterIngestionIssue__c issue : [
-                SELECT Row_Number__c, Severity__c, Code__c, Column__c, NPI__c, Message__c
+                SELECT Row_Number__c, Severity__c, Code__c, Column__c, Unique_ID__c, NPI__c, Message__c
                 FROM RosterIngestionIssue__c
                 WHERE RosterIngestionRun__c = :runId
             ]) {
@@ -129,8 +145,8 @@ private class RosterIngestionRunServiceTest {
             }
 
             Assert.areEqual(new Set<Integer>{ 4, 5, 6 }, issuesByRow.keySet(), 'One issue each for rows 4, 5 and 6');
-            Assert.areEqual(ProviderIngestionService.DUPLICATE_IN_FILE, issuesByRow.get(4).Code__c, 'Row 4 duplicates row 2');
-            Assert.areEqual(ProviderTestDataFactory.npi(NEW_NPI), issuesByRow.get(4).NPI__c, 'Issue keeps the row key');
+            Assert.areEqual(AccountMatchResult.Outcome.UNKNOWN_UNIQUE_ID.name(), issuesByRow.get(4).Code__c, 'Row 4 names no existing Provider');
+            Assert.areEqual(UNKNOWN_UNIQUE_ID, issuesByRow.get(4).Unique_ID__c, 'Issue keeps the row key');
             Assert.areEqual(RosterIngestionRunService.SEVERITY_WARNING, issuesByRow.get(5).Severity__c, 'Row 5 is a warning');
             Assert.areEqual('Provider Email', issuesByRow.get(5).Column__c, 'Warning names the column');
             Assert.areEqual(RosterIngestionRunService.CODE_COLUMN_COUNT, issuesByRow.get(6).Code__c, 'Row 6 has the wrong column count');
@@ -138,7 +154,7 @@ private class RosterIngestionRunServiceTest {
     }
 
     @IsTest
-    static void shouldGiveSameResults_WhenProcessedInSmallChunks() {
+    static void shouldGiveSameResults_WhenProcessedInSmallSlices() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Id runId = RosterIngestionRunService.startRun(roster().Id, false);
 
@@ -146,10 +162,39 @@ private class RosterIngestionRunServiceTest {
             runToCompletion(runId, 2);
             Test.stopTest();
 
-            RosterIngestionRun__c run = reload(runId);
-            assertStandardCounts(run);
-            Assert.areEqual(3, run.Chunk_Count__c, 'Five rows in chunks of two');
+            assertStandardCounts(reload(runId));
             Assert.areEqual(3, [SELECT COUNT() FROM RosterIngestionIssue__c WHERE RosterIngestionRun__c = :runId], 'Same issues');
+        }
+    }
+
+    @IsTest
+    static void shouldReportMissingRows_WhenSliceFails() {
+        System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
+            Id runId = RosterIngestionRunService.startRun(roster().Id, false);
+
+            Test.startTest();
+            runToCompletion(runId, 2, new Set<Integer>{ 1 }); // rows 4-5 fail
+            Test.stopTest();
+
+            RosterIngestionRun__c run = reload(runId);
+            Assert.areEqual(RosterIngestionRunService.STATUS_COMPLETED_WITH_ERRORS, run.Status__c, 'Other slices still complete');
+            Assert.areEqual(3, run.Rows_Processed__c, 'Only the successful slices are counted');
+            Assert.isTrue(run.Failure_Message__c.contains('2 of 5 rows were not processed'), 'Reports the gap: ' + run.Failure_Message__c);
+        }
+    }
+
+    @IsTest
+    static void shouldFailRun_WhenEverySliceFails() {
+        System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
+            Id runId = RosterIngestionRunService.startRun(roster().Id, false);
+
+            Test.startTest();
+            runToCompletion(runId, RosterIngestionRunService.BATCH_SIZE, new Set<Integer>{ 0 });
+            Test.stopTest();
+
+            RosterIngestionRun__c run = reload(runId);
+            Assert.areEqual(RosterIngestionRunService.STATUS_FAILED, run.Status__c, 'Nothing was processed');
+            Assert.isTrue(run.Failure_Message__c.contains('5 of 5 rows'), 'Reports the gap: ' + run.Failure_Message__c);
         }
     }
 
@@ -159,7 +204,7 @@ private class RosterIngestionRunServiceTest {
             Id runId = RosterIngestionRunService.startRun(roster().Id, true);
 
             Test.startTest();
-            runToCompletion(runId, 500);
+            runToCompletion(runId, RosterIngestionRunService.BATCH_SIZE);
             Test.stopTest();
 
             RosterIngestionRun__c run = reload(runId);
@@ -176,7 +221,7 @@ private class RosterIngestionRunServiceTest {
         ProviderTestDataFactory.uploadPersonnelFile(roster(), body);
         Id runId = RosterIngestionRunService.startRun(roster().Id, false);
         Test.startTest();
-        runToCompletion(runId, 500);
+        runToCompletion(runId, RosterIngestionRunService.BATCH_SIZE);
         Test.stopTest();
         return reload(runId);
     }
@@ -223,6 +268,23 @@ private class RosterIngestionRunServiceTest {
         }
     }
 
+    @IsTest
+    static void shouldFailRun_WhenFileHasTooManyRows() {
+        System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
+            ProviderIngestionBatch.maxRows = 3;
+            Id runId = RosterIngestionRunService.startRun(roster().Id, false);
+
+            Test.startTest();
+            runToCompletion(runId, RosterIngestionRunService.BATCH_SIZE);
+            Test.stopTest();
+
+            RosterIngestionRun__c run = reload(runId);
+            Assert.areEqual(RosterIngestionRunService.STATUS_FAILED, run.Status__c, 'Too many rows fails the run');
+            Assert.isTrue(run.Failure_Message__c.contains('at most 3'), 'States the limit: ' + run.Failure_Message__c);
+            Assert.areEqual(0, run.Rows_Processed__c, 'No rows processed');
+        }
+    }
+
     // ─── Starting ──────────────────────────────────────────────────────
 
     @IsTest
@@ -232,12 +294,13 @@ private class RosterIngestionRunServiceTest {
 
             Test.startTest();
             Id runId = RosterIngestionRunService.startRun(roster().Id, false);
+            // Checked before stopTest(), which runs the batch job.
             RosterIngestionRun__c run = reload(runId);
             Test.stopTest();
 
             Assert.areEqual(latest.Id, run.Content_Version_Id__c, 'Pinned to the latest version');
             Assert.areEqual(latest.VersionNumber, run.Version_Number__c, 'Records the version number');
-            Assert.areEqual(RosterIngestionRunService.STATUS_QUEUED, run.Status__c, 'Queued until its first chunk runs');
+            Assert.areEqual(RosterIngestionRunService.STATUS_QUEUED, run.Status__c, 'Queued until the batch job starts');
         }
     }
 
@@ -290,17 +353,18 @@ private class RosterIngestionRunServiceTest {
         }
     }
 
-    // ─── Promote and cancel ────────────────────────────────────────────
+    // ─── Promote, cancel, abandoned runs ───────────────────────────────
 
     @IsTest
     static void shouldPromoteToSameVersion_WhenNewerVersionUploaded() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Id dryRunId = RosterIngestionRunService.startRun(roster().Id, true);
-            runToCompletion(dryRunId, 500);
+            runToCompletion(dryRunId, RosterIngestionRunService.BATCH_SIZE);
             ProviderTestDataFactory.uploadPersonnelFile(roster(), Blob.valueOf('Provider Unique ID,Individual NPI,Last Name\r\n'));
 
             Test.startTest();
             Id realRunId = RosterIngestionRunService.promote(dryRunId);
+            runToCompletion(realRunId, RosterIngestionRunService.BATCH_SIZE);
             Test.stopTest();
 
             RosterIngestionRun__c realRun = reload(realRunId);
@@ -315,7 +379,7 @@ private class RosterIngestionRunServiceTest {
     static void shouldRefuseToPromote_WhenRunIsNotDryRun() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Id runId = RosterIngestionRunService.startRun(roster().Id, false);
-            runToCompletion(runId, 500);
+            runToCompletion(runId, RosterIngestionRunService.BATCH_SIZE);
 
             Test.startTest();
             try {
@@ -329,21 +393,17 @@ private class RosterIngestionRunServiceTest {
     }
 
     @IsTest
-    static void shouldStopProcessing_WhenCancelled() {
+    static void shouldProcessNothing_WhenCancelledBeforeStart() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Id runId = RosterIngestionRunService.startRun(roster().Id, false);
 
             Test.startTest();
             RosterIngestionRunService.cancel(runId);
-            RosterIngestionRunService.ChunkOutcome outcome = RosterIngestionRunService.processChunk(
-                runId,
-                new ProviderIngestionService.DuplicateTracker()
-            );
+            runToCompletion(runId, RosterIngestionRunService.BATCH_SIZE);
             Test.stopTest();
 
             RosterIngestionRun__c run = reload(runId);
-            Assert.areEqual(RosterIngestionRunService.STATUS_CANCELLED, run.Status__c, 'Cancelled');
-            Assert.areEqual(RosterIngestionRunService.ChunkOutcome.STOPPED, outcome, 'Pending chunk does nothing');
+            Assert.areEqual(RosterIngestionRunService.STATUS_CANCELLED, run.Status__c, 'Stays cancelled');
             Assert.areEqual(0, run.Rows_Processed__c, 'No rows processed');
         }
     }
@@ -352,7 +412,7 @@ private class RosterIngestionRunServiceTest {
     static void shouldRefuseToCancel_WhenRunFinished() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Id runId = RosterIngestionRunService.startRun(roster().Id, false);
-            runToCompletion(runId, 500);
+            runToCompletion(runId, RosterIngestionRunService.BATCH_SIZE);
 
             Test.startTest();
             try {
@@ -365,54 +425,38 @@ private class RosterIngestionRunServiceTest {
         }
     }
 
-    // ─── Chunk failures (finalizer) ────────────────────────────────────
-
     @IsTest
-    static void shouldHalveChunkSize_WhenChunkDies() {
+    static void shouldFailRun_WhenItsBatchJobEndedWithoutFinishingIt() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
-            Id runId = RosterIngestionRunService.startRun(roster().Id, false);
-
             Test.startTest();
-            new ProviderIngestionJobFinalizer(runId, new ProviderIngestionService.DuplicateTracker())
-                .handleFailure('System.LimitException: Apex CPU time limit exceeded');
-            // Checked before stopTest(), which would run the queued chunk to completion.
-            RosterIngestionRun__c run = reload(runId);
+            Id runId = RosterIngestionRunService.startRun(roster().Id, false);
             Test.stopTest();
+            // As if the job had died where the batch could not record it.
+            Database.update(
+                new RosterIngestionRun__c(Id = runId, Status__c = RosterIngestionRunService.STATUS_RUNNING),
+                AccessLevel.SYSTEM_MODE
+            );
 
-            Assert.areEqual(RosterIngestionRunService.STATUS_QUEUED, run.Status__c, 'Still active; the chunk is retried');
-            Assert.areEqual(250, run.Chunk_Size__c, 'Half of the default 500');
+            RosterIngestionRunService.failAbandonedRuns(roster().Id);
+
+            RosterIngestionRun__c run = reload(runId);
+            Assert.areEqual(RosterIngestionRunService.STATUS_FAILED, run.Status__c, 'No longer blocks new runs');
+            Assert.isTrue(run.Failure_Message__c.contains('batch job ended'), 'Explains why: ' + run.Failure_Message__c);
         }
     }
 
     @IsTest
-    static void shouldFailRun_WhenMinimumChunkDies() {
-        System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
-            Id runId = RosterIngestionRunService.startRun(roster().Id, false);
-            Database.update(new RosterIngestionRun__c(Id = runId, Chunk_Size__c = RosterIngestionRunService.MIN_CHUNK_SIZE), AccessLevel.SYSTEM_MODE);
-
-            Test.startTest();
-            RosterIngestionRunService.handleChunkFailure(runId, new ProviderIngestionService.DuplicateTracker(), 'CPU limit');
-            Test.stopTest();
-
-            RosterIngestionRun__c run = reload(runId);
-            Assert.areEqual(RosterIngestionRunService.STATUS_FAILED, run.Status__c, 'Cannot shrink further');
-            Assert.isTrue(run.Failure_Message__c.contains('CPU limit'), 'Keeps the reason: ' + run.Failure_Message__c);
-            Assert.isTrue(run.Failure_Message__c.contains('row 2'), 'Says where: ' + run.Failure_Message__c);
-        }
-    }
-
-    @IsTest
-    static void shouldFailActiveRun_WhenJobReportsError() {
+    static void shouldLeaveRunActive_WhenItsBatchJobIsStillQueued() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Id runId = RosterIngestionRunService.startRun(roster().Id, false);
 
             Test.startTest();
-            RosterIngestionRunService.failRun(runId, 'Unexpected error: boom');
+            RosterIngestionRunService.failAbandonedRuns(roster().Id);
+            // Checked before stopTest(), which runs the batch job.
+            RosterIngestionRun__c run = reload(runId);
             Test.stopTest();
 
-            RosterIngestionRun__c run = reload(runId);
-            Assert.areEqual(RosterIngestionRunService.STATUS_FAILED, run.Status__c, 'Failed');
-            Assert.areEqual('Unexpected error: boom', run.Failure_Message__c, 'Keeps the reason');
+            Assert.areEqual(RosterIngestionRunService.STATUS_QUEUED, run.Status__c, 'Job has not ended');
         }
     }
 }

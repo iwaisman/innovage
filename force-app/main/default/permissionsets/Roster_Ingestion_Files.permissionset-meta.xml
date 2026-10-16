@@ -53,16 +53,6 @@
     </fieldPermissions>
     <fieldPermissions>
         <editable>false</editable>
-        <field>RosterIngestionRun__c.Chunk_Count__c</field>
-        <readable>true</readable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <editable>false</editable>
-        <field>RosterIngestionRun__c.Chunk_Size__c</field>
-        <readable>true</readable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <editable>false</editable>
         <field>RosterIngestionRun__c.Completed_At__c</field>
         <readable>true</readable>
     </fieldPermissions>
@@ -113,16 +103,6 @@
     </fieldPermissions>
     <fieldPermissions>
         <editable>false</editable>
-        <field>RosterIngestionRun__c.Next_Offset__c</field>
-        <readable>true</readable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <editable>false</editable>
-        <field>RosterIngestionRun__c.Next_Row_Number__c</field>
-        <readable>true</readable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <editable>false</editable>
         <field>RosterIngestionRun__c.Rows_Processed__c</field>
         <readable>true</readable>
     </fieldPermissions>
@@ -139,6 +119,11 @@
     <fieldPermissions>
         <editable>false</editable>
         <field>RosterIngestionRun__c.Status__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>false</editable>
+        <field>RosterIngestionRun__c.Total_Rows__c</field>
         <readable>true</readable>
     </fieldPermissions>
     <fieldPermissions>

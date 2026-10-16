@@ -123,7 +123,7 @@ export default class RosterIngestionRuns extends NavigationMixin(LightningElemen
 function summarize(run) {
     const would = run.Dry_Run__c ? 'would be ' : '';
     return [
-        `${run.Rows_Processed__c ?? 0} rows`,
+        run.Total_Rows__c == null ? `${run.Rows_Processed__c ?? 0} rows` : `${run.Rows_Processed__c ?? 0} of ${run.Total_Rows__c} rows`,
         `${run.Inserted__c ?? 0} ${would}inserted`,
         `${run.Updated__c ?? 0} ${would}updated`,
         `${run.Unchanged__c ?? 0} unchanged`,

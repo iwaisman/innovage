@@ -45,11 +45,6 @@
                 <label>MISSING_LAST_NAME</label>
             </value>
             <value>
-                <fullName>DUPLICATE_IN_FILE</fullName>
-                <default>false</default>
-                <label>DUPLICATE_IN_FILE</label>
-            </value>
-            <value>
                 <fullName>SAVE_ERROR</fullName>
                 <default>false</default>
                 <label>SAVE_ERROR</label>

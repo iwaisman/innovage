@@ -208,7 +208,7 @@ private class ProviderIngestionServiceTest {
         List<ProviderIngestionService.RowInput> rows,
         Boolean dryRun
     ) {
-        return ProviderIngestionService.ingestAll(rows, new ProviderIngestionService.DuplicateTracker(), dryRun);
+        return ProviderIngestionService.ingestAll(rows, dryRun);
     }
 
     @IsTest
@@ -235,8 +235,10 @@ private class ProviderIngestionServiceTest {
         Assert.areEqual('(720) 555-0177', existing(EXISTING).Phone, 'Phone updated');
     }
 
+    // ─── Duplicate rows (see DUPLICATES in ProviderIngestionService) ───
+
     @IsTest
-    static void shouldRejectLaterRow_WhenNpiRepeatsInFile() {
+    static void shouldFailLaterInsert_WhenNewNpiRepeatsInSameCall() {
         String npi = ProviderTestDataFactory.npi(1);
         List<ProviderIngestionService.RowInput> rows = new List<ProviderIngestionService.RowInput>{
             newProviderRow(2, npi),
@@ -247,63 +249,56 @@ private class ProviderIngestionServiceTest {
         List<ProviderIngestionService.IngestResult> results = ingestAll(rows, false);
         Test.stopTest();
 
-        Assert.areEqual(ProviderIngestionService.Outcome.INSERTED, results[0].outcome, 'First occurrence wins: ' + results[0].errors);
-        Assert.areEqual(ProviderIngestionService.Outcome.ERROR, results[1].outcome, 'Later occurrence is an error');
-        Assert.areEqual(ProviderIngestionService.DUPLICATE_IN_FILE, results[1].errorCode, 'Reported as a duplicate');
-        Assert.isTrue(results[1].errors[0].contains('Row 2'), 'Names the first row: ' + results[1].errors);
+        Assert.areEqual(ProviderIngestionService.Outcome.INSERTED, results[0].outcome, 'First row inserts: ' + results[0].errors);
+        Assert.areEqual(ProviderIngestionService.Outcome.ERROR, results[1].outcome, 'Second insert is rejected');
+        Assert.areEqual(ProviderIngestionService.SAVE_ERROR, results[1].errorCode, 'By the database (NPI__c is unique)');
+        Assert.areEqual(1, [SELECT COUNT() FROM Account WHERE NPI__c = :npi], 'One Provider inserted');
     }
 
     @IsTest
-    static void shouldRejectLaterRow_WhenDifferentKeysMatchSameProvider() {
-        Account provider = existing(EXISTING);
-        Map<String, String> byUniqueId = new Map<String, String>{ ProviderCsvMapping.UNIQUE_ID_HEADER => provider.InnovAge_Unique_ID__c };
-        List<ProviderIngestionService.RowInput> rows = new List<ProviderIngestionService.RowInput>{
-            new ProviderIngestionService.RowInput(2, byUniqueId),
-            new ProviderIngestionService.RowInput(3, rowWithNpi(ProviderTestDataFactory.NPI_1))
-        };
+    static void shouldUpdateInsertedProvider_WhenNpiRepeatsInLaterCall() {
+        String npi = ProviderTestDataFactory.npi(2);
+        Id insertedId = ingestAll(new List<ProviderIngestionService.RowInput>{ newProviderRow(2, npi) }, false)[0].accountId;
+        ProviderIngestionService.RowInput laterRow = newProviderRow(900, npi);
+        laterRow.values.put('Provider Phone', '720-555-0199');
 
         Test.startTest();
-        List<ProviderIngestionService.IngestResult> results = ingestAll(rows, false);
+        List<ProviderIngestionService.IngestResult> results = ingestAll(new List<ProviderIngestionService.RowInput>{ laterRow }, false);
         Test.stopTest();
 
-        Assert.areEqual(ProviderIngestionService.Outcome.UNCHANGED, results[0].outcome, 'First row matches the Provider');
-        Assert.areEqual(ProviderIngestionService.DUPLICATE_IN_FILE, results[1].errorCode, 'Second row matches the same Provider');
-        Assert.areEqual(provider.Id, results[1].accountId, 'Reports which Provider');
+        Assert.areEqual(ProviderIngestionService.Outcome.UPDATED, results[0].outcome, 'Later chunk updates the Provider: ' + results[0].errors);
+        Assert.areEqual(insertedId, results[0].accountId, 'The Provider the earlier chunk inserted');
+        Assert.areEqual('(720) 555-0199', reload(insertedId).Phone, 'Later row\'s value saved');
     }
 
     @IsTest
-    static void shouldRejectRow_WhenEarlierCallWithSameTrackerClaimedKey() {
-        ProviderIngestionService.DuplicateTracker tracker = new ProviderIngestionService.DuplicateTracker();
-        String npi = ProviderTestDataFactory.npi(2);
-        ProviderIngestionService.ingestAll(new List<ProviderIngestionService.RowInput>{ newProviderRow(2, npi) }, tracker, false);
+    static void shouldMergeUpdates_WhenRowsInSameCallChangeSameProvider() {
+        Account provider = existing(EXISTING);
+        Map<String, String> byUniqueId = new Map<String, String>{
+            ProviderCsvMapping.UNIQUE_ID_HEADER => provider.InnovAge_Unique_ID__c,
+            'Provider Phone' => '720-555-0101'
+        };
+        Map<String, String> byNpi = rowWithNpi(ProviderTestDataFactory.NPI_1);
+        byNpi.put('Provider Phone', '720-555-0102');
+        byNpi.put('Provider Email', 'merged@example.com');
 
         Test.startTest();
-        List<ProviderIngestionService.IngestResult> results = ProviderIngestionService.ingestAll(
-            new List<ProviderIngestionService.RowInput>{ newProviderRow(900, npi) },
-            tracker,
+        List<ProviderIngestionService.IngestResult> results = ingestAll(
+            new List<ProviderIngestionService.RowInput>{
+                new ProviderIngestionService.RowInput(2, byUniqueId),
+                new ProviderIngestionService.RowInput(3, byNpi)
+            },
             false
         );
         Test.stopTest();
 
-        Assert.areEqual(ProviderIngestionService.DUPLICATE_IN_FILE, results[0].errorCode, 'The tracker spans calls (chunks)');
-    }
-
-    @IsTest
-    static void shouldNotClaimKeys_WhenTrackerCopied() {
-        ProviderIngestionService.DuplicateTracker tracker = new ProviderIngestionService.DuplicateTracker();
-        ProviderIngestionService.DuplicateTracker snapshot = tracker.copy();
-        String npi = ProviderTestDataFactory.npi(3);
-        ProviderIngestionService.ingestAll(new List<ProviderIngestionService.RowInput>{ newProviderRow(2, npi) }, tracker, true);
-
-        Test.startTest();
-        List<ProviderIngestionService.IngestResult> results = ProviderIngestionService.ingestAll(
-            new List<ProviderIngestionService.RowInput>{ newProviderRow(2, npi) },
-            snapshot,
-            true
-        );
-        Test.stopTest();
-
-        Assert.areEqual(ProviderIngestionService.Outcome.INSERTED, results[0].outcome, 'The copy did not see the later claim');
+        Assert.areEqual(ProviderIngestionService.Outcome.UPDATED, results[0].outcome, 'First row updated: ' + results[0].errors);
+        Assert.areEqual(ProviderIngestionService.Outcome.UPDATED, results[1].outcome, 'Second row updated: ' + results[1].errors);
+        Assert.areEqual(new Set<String>{ 'Phone' }, results[0].changesByField.keySet(), 'Each row reports its own changes');
+        Assert.areEqual(new Set<String>{ 'Phone', 'PersonEmail' }, results[1].changesByField.keySet(), 'Each row reports its own changes');
+        Account updated = reload(provider.Id);
+        Assert.areEqual('(720) 555-0102', updated.Phone, 'The later row wins a field both rows change');
+        Assert.areEqual('merged@example.com', updated.PersonEmail, 'Fields only one row changes are saved');
     }
 
     @IsTest
@@ -346,10 +341,10 @@ private class ProviderIngestionServiceTest {
     }
 
     @IsTest
-    static void shouldThrow_WhenTrackerNull() {
+    static void shouldThrow_WhenRowsNull() {
         Test.startTest();
         try {
-            ProviderIngestionService.ingestAll(new List<ProviderIngestionService.RowInput>(), null, false);
+            ProviderIngestionService.ingestAll(null, false);
             Assert.fail('Expected IllegalArgumentException');
         } catch (IllegalArgumentException e) {
             Assert.isTrue(e.getMessage().contains('null'), 'Message explains the null argument');

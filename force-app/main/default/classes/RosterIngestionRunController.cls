@@ -11,9 +11,10 @@ public with sharing class RosterIngestionRunController {
     @AuraEnabled
     public static List<RosterIngestionRun__c> getRuns(Id recordId) {
         try {
+            RosterIngestionRunService.failAbandonedRuns(recordId);
             return [
                 SELECT Id, Name, Status__c, Dry_Run__c, Version_Number__c, CreatedDate, CreatedBy.Name,
-                    Started_At__c, Completed_At__c, Rows_Processed__c, Inserted__c, Updated__c,
+                    Started_At__c, Completed_At__c, Total_Rows__c, Rows_Processed__c, Inserted__c, Updated__c,
                     Unchanged__c, Errored__c, Rows_With_Warnings__c, Failure_Message__c
                 FROM RosterIngestionRun__c
                 WHERE RosterIngestion__c = :recordId

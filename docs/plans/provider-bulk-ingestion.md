@@ -1,7 +1,9 @@
 # Plan: bulk Provider ingestion
 
-Status: implemented and deployed to the `innovage` sandbox on 2026-10-14 (see section 10). Builds on the single-row reference implementation
-(`ProviderIngestionService`, `ProviderMatcher`, `ProviderCsvMapping`, `CsvParser`).
+Status: implemented, then **revised on 2026-10-15 to use Batch Apex** (see
+section 11). Sections 1–9 describe the original Queueable-chain design and are
+kept as history. For the current design, see
+[docs/architecture/provider-bulk-ingestion.md](../architecture/provider-bulk-ingestion.md).
 
 ## 1. Summary
 
@@ -76,7 +78,7 @@ version creates a new Run, so a RosterIngestion's Runs form its history:
    2. First chunk only: parse the header, check required headers
    3. Parse up to chunkSize records from the saved character offset → rows + nextOffset
    4. ProviderIngestionService.ingestAll(rows): map, bulk match (one query),
-      in-file duplicate checks, partial-success DML
+      partial-success DML
       (dry run: DML wrapped in a savepoint and rolled back)
    5. Insert Issues; update the Run's counters and cursor  ← same transaction as step 4
    6. Rows left? enqueue the next job : set Status = Completed / Completed with Errors
@@ -112,7 +114,6 @@ Runs and Issues. These are temporary processing artifacts, kept for weeks.
 | Started_At__c, Completed_At__c | |
 | Rows_Processed__c, Inserted__c, Updated__c, Unchanged__c, Errored__c, Rows_With_Warnings__c | Updated at each chunk commit. In a dry run these mean "would insert", "would update" and so on. |
 | Next_Offset__c, Next_Row_Number__c, Chunk_Size__c, Chunk_Count__c | Resume cursor and chunking state |
-| Seen_Keys__c | In-file duplicate tracking state carried between chunks (section 7) |
 | Failure_Message__c | Run-level fatal error |
 | Last_Job_Id__c | AsyncApexJob Id |
 
@@ -124,7 +125,7 @@ One record per issue, not per row.
 |---|---|
 | Row_Number__c | Spreadsheet row number, with the header as row 1 |
 | Severity__c | Error / Warning |
-| Code__c | Match outcomes, INVALID_VALUE, MISSING_LAST_NAME, DUPLICATE_IN_FILE, SAVE_ERROR |
+| Code__c | Match outcomes, INVALID_VALUE, MISSING_LAST_NAME, SAVE_ERROR, COLUMN_COUNT |
 | Column__c | CSV header (for warnings) |
 | Message__c | **Never contains values.** This keeps the existing rule that SSN and DOB never appear in messages. |
 | Provider__c | Lookup to Account, when known |
@@ -147,16 +148,36 @@ Caveats, for the team to review (also documented in the code):
   "Publish Immediately" survive the rollback. Emails and enqueued jobs are
   discarded.
 - **A dry run costs as much as a real run** in CPU and time.
-- **Later chunks do not see earlier chunks' inserts.** "First occurrence wins"
-  makes the results match a real run anyway.
+- **Later chunks do not see earlier chunks' inserts.** A row for a Provider
+  that an earlier chunk would insert is reported as another insert, where a
+  real run would update it (see rule 1 in section 7).
 
 **Promote:** "Run for real" on a dry run creates a new Run pinned to the same
 ContentVersion.
 
 ## 7. Behavior rules
 
-1. **Duplicates within one file: the first occurrence wins.** Later rows with
-   the same Unique ID, NPI or matched Provider are DUPLICATE_IN_FILE errors.
+1. **Duplicate rows are not detected.** The stakeholder decided (2026-10-15)
+   that several rows for the same Provider are acceptable, so rows are not
+   checked against each other and no state is carried between chunks. The
+   outcome depends on whether the rows land in the same chunk:
+   - **Different chunks:** each row is matched against the database as it is
+     then, so the first row inserts the Provider and later rows update it (or
+     find it unchanged).
+   - **Same chunk, new Provider:** all such rows are planned as inserts; the
+     database rejects all but the first for the duplicate NPI (SAVE_ERROR).
+   - **Same chunk, existing Provider:** the rows' changes are merged into one
+     update (Salesforce rejects a DML list holding the same Id twice, which
+     would otherwise fail the whole chunk). Each row reports its own changes
+     against the stored Provider; where several rows change the same field,
+     the last row's value is saved.
+
+   Chunks still run one after another, not in parallel: a chunk's start is
+   only known once the previous chunk is parsed, an async job can enqueue only
+   one job, and parallel chunks would contend for locks on the Run and on
+   records touched by Account automation.
+   The full arguments, and the plan if we ever switch, are in
+   [parallel-chunk-processing.md](parallel-chunk-processing.md).
 2. **Row numbers** are spreadsheet rows, with the header as row 1.
 3. **Missing required headers** (Provider Unique ID, Individual NPI, Last Name)
    fail the Run up front. Unknown headers are ignored, including "Roster Line
@@ -215,3 +236,41 @@ when the generator wrote invalid `PRV-000001` IDs.
 
 **Removed:** the defunct `*_File_Structure_Errors__c` fields were deleted with a
 destructive deploy. They can be recovered from Deleted Fields for 15 days.
+
+## 11. Revision: Batch Apex (2026-10-15)
+
+The Queueable chain was replaced with Batch Apex (`ProviderIngestionBatch`).
+
+**Why.** The code is maintained by engineers for whom simplicity matters more
+than file-size headroom. The stakeholder accepts a limit of **5,000 rows per
+file**, which is expected to be reached rarely, if ever. At that size the whole
+file can be parsed in one transaction: about 1.7 MB of text and an estimated
+5 MB of heap. Batch Apex then provides the chunking, the sequencing and the
+completion that the chain implemented by hand. Batch Apex is also a pattern
+most Salesforce engineers already know.
+
+**What changed**
+
+- **Removed:**
+  - `ProviderIngestionJob` and `ProviderIngestionJobFinalizer`.
+  - The resumable `CsvParser.parseChunk`.
+  - The Run's cursor fields (Next Offset, Next Row Number, Chunk Size, Chunk
+    Count).
+- **Added:**
+  - `ProviderIngestionBatch`: `start()` parses the whole file; `execute()`
+    ingests 200 rows at a time; `finish()` sets the status.
+  - The Run's Total Rows field.
+  - `RosterIngestionRunService.failAbandonedRuns()`, which fails a Run whose
+    batch job ended without finishing it, so the Run cannot block new runs.
+- **Given up:** the automatic retry of a chunk that hit a governor limit. A
+  failed slice is now reported as missing rows (Completed with Errors), and
+  re-running the file is safe.
+- **Limits:** 5,000 rows, plus a 3 MB file-size guard checked before the job
+  starts.
+
+**Measured** with a 5,000-row dry run in the `innovage` sandbox:
+
+- 3½ minutes in total, in 25 slices.
+- `start()` took 9.7 s from start to finish.
+- Each slice used 0.5–0.6 s of CPU.
+

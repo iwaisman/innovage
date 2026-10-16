@@ -9,10 +9,22 @@
  * ingestAll() is the bulk entry point: one matching query and at most one insert
  * and one update for the whole list. ingest() is the single-row form of it.
  *
- * Rows in one file must not refer to the same Provider twice; the first
- * occurrence wins and later ones are DUPLICATE_IN_FILE errors. A
- * DuplicateTracker remembers what earlier rows claimed, so the rule also holds
- * when a file is ingested in several chunks (see RosterIngestionRunService).
+ * DUPLICATES: rows are not checked against each other. Several rows referring
+ * to the same Provider are accepted (a stakeholder decision, see
+ * docs/plans/provider-bulk-ingestion.md); what happens depends on whether they
+ * are in the same ingestAll() call (one slice of ProviderIngestionBatch) or not:
+ *
+ *   - Different calls: each row is matched against the database as it is at
+ *     that moment, so a row that inserts a Provider is followed by later rows
+ *     that update it (or find it unchanged).
+ *   - Same call, new Provider: every such row is planned as an insert, and
+ *     the database rejects all but the first for the duplicate NPI
+ *     (SAVE_ERROR).
+ *   - Same call, existing Provider: the rows' changes are merged into a single
+ *     update (Salesforce rejects a DML list holding the same Id twice). Each
+ *     row is compared with the Provider as stored before the call and reports
+ *     its own changes; where several rows change the same field, the last
+ *     row's value is saved.
  *
  * DML runs in system mode for the same reason ProviderMatcher queries in
  * system mode: ingestion writes Providers on behalf of the roster, not the
@@ -27,7 +39,6 @@ public with sharing class ProviderIngestionService {
      * values of RosterIngestionIssue__c.Code__c.
      */
     public static final String MISSING_LAST_NAME = 'MISSING_LAST_NAME';
-    public static final String DUPLICATE_IN_FILE = 'DUPLICATE_IN_FILE';
     public static final String SAVE_ERROR = 'SAVE_ERROR';
 
     /**
@@ -110,43 +121,6 @@ public with sharing class ProviderIngestionService {
     }
 
     /**
-     * Remembers which row first used each key value and each matched Provider.
-     *
-     * Carried from chunk to chunk when a file is ingested in several
-     * transactions, so it is plain serializable state.
-     */
-    public class DuplicateTracker {
-        private Map<String, Integer> firstRowByKey = new Map<String, Integer>();
-
-        /**
-         * @return A copy that later claims do not affect
-         */
-        public DuplicateTracker copy() {
-            DuplicateTracker copied = new DuplicateTracker();
-            copied.firstRowByKey.putAll(firstRowByKey);
-            return copied;
-        }
-
-        /*
-         * Returns the row that already claimed one of the keys, or null after
-         * claiming all of them for rowNumber. Blank keys are skipped.
-         */
-        private Integer claim(List<String> keys, Integer rowNumber) {
-            for (String key : keys) {
-                if (key != null && firstRowByKey.containsKey(key)) {
-                    return firstRowByKey.get(key);
-                }
-            }
-            for (String key : keys) {
-                if (key != null) {
-                    firstRowByKey.put(key, rowNumber);
-                }
-            }
-            return null;
-        }
-    }
-
-    /**
      * @param csvRow One CSV row, header => value (see CsvParser.parseWithHeaders)
      * @return What happened to the row
      * @throws IllegalArgumentException if csvRow is null
@@ -158,7 +132,7 @@ public with sharing class ProviderIngestionService {
         if (csvRow == null) {
             throw new IllegalArgumentException('CSV row cannot be null.');
         }
-        return ingestAll(new List<RowInput>{ new RowInput(2, csvRow) }, new DuplicateTracker(), false)[0];
+        return ingestAll(new List<RowInput>{ new RowInput(2, csvRow) }, false)[0];
     }
 
     /**
@@ -179,20 +153,20 @@ public with sharing class ProviderIngestionService {
      *     are rolled back. Check Account automation before relying on dry runs.
      *   - A dry run costs as much CPU and time as a real run, because the same
      *     triggers and flows execute.
-     *   - Rows of later calls (chunks) do not see Providers inserted by earlier
-     *     calls, since those were rolled back. The tracker's first-occurrence-wins
-     *     rule makes the outcome the same as a real run anyway.
+     *   - Rows of later calls (slices) do not see Providers inserted by earlier
+     *     calls, since those were rolled back. A row for a Provider that an
+     *     earlier slice would insert is reported as another insert, where a
+     *     real run would update it (see DUPLICATES above).
      *   - The savepoint and the rollback each count as one DML statement.
      *
      * @param rows The rows to ingest, in file order
-     * @param tracker Keys and Providers claimed by earlier rows; updated with these rows' claims
      * @param dryRun true to roll back all Provider changes (see above)
      * @return One result per row, in the same order
-     * @throws IllegalArgumentException if rows or tracker is null, or a row has no values
+     * @throws IllegalArgumentException if rows is null, or a row has no values
      */
-    public static List<IngestResult> ingestAll(List<RowInput> rows, DuplicateTracker tracker, Boolean dryRun) {
-        if (rows == null || tracker == null) {
-            throw new IllegalArgumentException('Rows and tracker cannot be null.');
+    public static List<IngestResult> ingestAll(List<RowInput> rows, Boolean dryRun) {
+        if (rows == null) {
+            throw new IllegalArgumentException('Rows cannot be null.');
         }
 
         List<IngestResult> results = new List<IngestResult>();
@@ -206,11 +180,9 @@ public with sharing class ProviderIngestionService {
             results.add(new IngestResult(row.rowNumber, mapped));
         }
 
-        List<Integer> matchableIndexes = claimKeys(results, tracker);
-
         List<ProviderMatcher.MatchRequest> requests = new List<ProviderMatcher.MatchRequest>();
-        for (Integer index : matchableIndexes) {
-            requests.add(new ProviderMatcher.MatchRequest(results[index].uniqueId, results[index].npi));
+        for (IngestResult result : results) {
+            requests.add(new ProviderMatcher.MatchRequest(result.uniqueId, result.npi));
         }
         List<AccountMatchResult> matches = ProviderMatcher.matchAll(
             requests,
@@ -218,37 +190,12 @@ public with sharing class ProviderIngestionService {
         );
 
         PendingSaves saves = new PendingSaves();
-        for (Integer i = 0; i < matchableIndexes.size(); i++) {
-            Integer index = matchableIndexes[i];
-            planRow(results[index], mappedRows[index], matches[i], tracker, saves);
+        for (Integer i = 0; i < results.size(); i++) {
+            planRow(results[i], mappedRows[i], matches[i], saves);
         }
 
         saves.execute(dryRun == true);
         return results;
-    }
-
-    /*
-     * Claims each row's key values in file order. A row whose Unique ID or NPI
-     * was already used by an earlier row is a DUPLICATE_IN_FILE error. Returns
-     * the indexes of the rows that go on to matching.
-     */
-    private static List<Integer> claimKeys(List<IngestResult> results, DuplicateTracker tracker) {
-        List<Integer> matchableIndexes = new List<Integer>();
-        for (Integer i = 0; i < results.size(); i++) {
-            IngestResult result = results[i];
-            List<String> keys = new List<String>{
-                String.isBlank(result.uniqueId) ? null : 'UID:' + result.uniqueId,
-                String.isBlank(result.npi) ? null : 'NPI:' + result.npi
-            };
-
-            Integer earlierRow = tracker.claim(keys, result.rowNumber);
-            if (earlierRow != null) {
-                result.fail(DUPLICATE_IN_FILE, 'Row ' + earlierRow + ' has the same Provider Unique ID or NPI; only the first row is ingested.');
-            } else {
-                matchableIndexes.add(i);
-            }
-        }
-        return matchableIndexes;
     }
 
     /*
@@ -258,20 +205,13 @@ public with sharing class ProviderIngestionService {
         IngestResult result,
         ProviderCsvMapping.MappedRow mapped,
         AccountMatchResult match,
-        DuplicateTracker tracker,
         PendingSaves saves
     ) {
         result.matchOutcome = match.outcome;
 
         switch on match.outcome {
             when UNIQUE_MATCH {
-                Integer earlierRow = tracker.claim(new List<String>{ 'ACC:' + match.account.Id }, result.rowNumber);
-                if (earlierRow != null) {
-                    result.accountId = match.account.Id;
-                    result.fail(DUPLICATE_IN_FILE, 'Row ' + earlierRow + ' refers to the same Provider; only the first row is ingested.');
-                } else {
-                    planUpdate(match.account, mapped, result, saves);
-                }
+                planUpdate(match.account, mapped, result, saves);
             }
             when NO_MATCH {
                 planInsert(mapped, result, saves);
@@ -309,7 +249,7 @@ public with sharing class ProviderIngestionService {
     ) {
         result.accountId = existing.Id;
 
-        Account changes = new Account(Id = existing.Id);
+        Map<Schema.SObjectField, Object> changedValuesByField = new Map<Schema.SObjectField, Object>();
         for (ProviderCsvMapping.FieldMapping mapping : ProviderCsvMapping.getUpdatableMappings()) {
             if (!mapped.valuesByField.containsKey(mapping.field)) {
                 continue;
@@ -326,7 +266,7 @@ public with sharing class ProviderIngestionService {
                 continue;
             }
 
-            changes.put(mapping.field, incomingValue);
+            changedValuesByField.put(mapping.field, incomingValue);
             result.changesByField.put(mapping.getFieldName(), new FieldChange(storedValue, incomingValue));
         }
 
@@ -335,24 +275,41 @@ public with sharing class ProviderIngestionService {
             return;
         }
 
-        saves.updates.add(changes);
-        saves.updateResults.add(result);
+        saves.addUpdate(existing.Id, changedValuesByField, result);
     }
 
     /*
-     * The inserts and updates of one ingestAll() call, each paired with the
-     * result of the row it came from (same index).
+     * The inserts and updates of one ingestAll() call. Each insert is paired with
+     * the result of its row (same index); each update with the results of every
+     * row that changes that Provider (see DUPLICATES in the class comment).
      */
     private class PendingSaves {
         List<Account> inserts = new List<Account>();
         List<IngestResult> insertResults = new List<IngestResult>();
-        List<Account> updates = new List<Account>();
-        List<IngestResult> updateResults = new List<IngestResult>();
+        Map<Id, Account> updatesById = new Map<Id, Account>();
+        Map<Id, List<IngestResult>> updateResultsById = new Map<Id, List<IngestResult>>();
+
+        /*
+         * Merges a row's changes into the Provider's pending update, in row order,
+         * so a later row's value for a field replaces an earlier row's.
+         */
+        void addUpdate(Id accountId, Map<Schema.SObjectField, Object> changedValuesByField, IngestResult result) {
+            if (!updatesById.containsKey(accountId)) {
+                updatesById.put(accountId, new Account(Id = accountId));
+                updateResultsById.put(accountId, new List<IngestResult>());
+            }
+            Account changes = updatesById.get(accountId);
+            for (Schema.SObjectField field : changedValuesByField.keySet()) {
+                changes.put(field, changedValuesByField.get(field));
+            }
+            updateResultsById.get(accountId).add(result);
+        }
 
         void execute(Boolean dryRun) {
-            if (inserts.isEmpty() && updates.isEmpty()) {
+            if (inserts.isEmpty() && updatesById.isEmpty()) {
                 return;
             }
+            List<Account> updates = updatesById.values();
 
             // See the DRY RUN notes on ingestAll() before changing this.
             Savepoint beforeSaves = dryRun ? Database.setSavepoint() : null;
@@ -364,7 +321,9 @@ public with sharing class ProviderIngestionService {
                     applySaveResult(insertSaveResults[i], Outcome.INSERTED, insertResults[i], dryRun);
                 }
                 for (Integer i = 0; i < updateSaveResults.size(); i++) {
-                    applySaveResult(updateSaveResults[i], Outcome.UPDATED, updateResults[i], dryRun);
+                    for (IngestResult result : updateResultsById.get(updates[i].Id)) {
+                        applySaveResult(updateSaveResults[i], Outcome.UPDATED, result, dryRun);
+                    }
                 }
             } finally {
                 if (dryRun) {

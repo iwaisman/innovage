@@ -1,30 +1,23 @@
 /**
- * Runs the ingestion of a RosterIngestion__c's personnel file as a
- * RosterIngestionRun__c, one chunk of rows per async transaction.
+ * The user-facing actions on a RosterIngestionRun__c: start a Run over a
+ * roster's personnel file, promote a dry run to a real one, and cancel a Run.
+ * The processing itself is ProviderIngestionBatch.
  *
- *     startRun()     sync: pins the file's current version, creates the Run, enqueues the first chunk
- *     processChunk() async (ProviderIngestionJob): parses and ingests the next chunk, records
- *                    Issues and counters, then enqueues the next chunk or completes the Run
- *     handleChunkFailure()  (ProviderIngestionJobFinalizer): a chunk died on a governor limit;
- *                    retry it with half as many rows, or fail the Run
+ * A Run is pinned to one file version (ContentVersion) when it starts, so
+ * uploading a new version while it runs has no effect on it. Only one Run per
+ * roster may be active (Queued or Running) at a time.
  *
- * Every chunk commits its Provider changes, Issues, counters and cursor
- * (Next_Offset__c) together, so a Run's records always describe exactly the
- * rows that were committed. Chunks run one at a time, so the Run is never
- * written by two transactions at once.
- *
- * See docs/plans/provider-bulk-ingestion.md for the design.
+ * See docs/architecture/provider-bulk-ingestion.md for how the pieces fit
+ * together.
  *
  * Starting, promoting and cancelling check the user's access to the roster.
  * After that, Run and Issue records are written in system mode: they are
- * processing records owned by the roster, and the uploader needs no field
- * access to their internal fields.
+ * processing records owned by the roster, and the user needs no field access
+ * to their internal fields.
  */
 public with sharing class RosterIngestionRunService {
 
     public class RunException extends Exception {}
-
-    public enum ChunkOutcome { MORE, DONE, STOPPED }
 
     public static final String STATUS_QUEUED = 'Queued';
     public static final String STATUS_RUNNING = 'Running';
@@ -41,40 +34,23 @@ public with sharing class RosterIngestionRunService {
     public static final String CODE_INVALID_VALUE = 'INVALID_VALUE';
 
     /*
-     * 200 rows cost about 3 s of the 60 s async CPU limit in the innovage sandbox
-     * (2026-10-14: parsing + mapping ~3 ms per row, inserting 200 Providers through
-     * Account automation ~1.2 s, updating 200 ~1.7 s). 500 leaves wide headroom;
-     * the finalizer halves it if a chunk still hits a limit.
+     * Rows per execute() of ProviderIngestionBatch. 200 rows cost about 3 s of
+     * the 60 s async CPU limit in the innovage sandbox (2026-10-14), including
+     * the org's Account automation.
      */
-    @TestVisible
-    private static final Integer DEFAULT_CHUNK_SIZE = 500;
-    public static final Integer MIN_CHUNK_SIZE = 10;
+    public static final Integer BATCH_SIZE = 200;
 
     /*
-     * Every chunk holds the whole file in the 12 MB async heap (about one byte
-     * per character, plus the Blob while it is converted).
+     * A guard against files too large to parse in one transaction, checked
+     * before the job starts. The real limit is the row count, checked by
+     * ProviderIngestionBatch.start().
      */
     @TestVisible
-    private static Integer maxFileBytes = 5 * 1024 * 1024;
-
-    /* The first data row; the header is spreadsheet row 1. */
-    private static final Integer FIRST_DATA_ROW = 2;
-
-    private static final List<String> REQUIRED_HEADERS = new List<String>{
-        ProviderCsvMapping.UNIQUE_ID_HEADER,
-        ProviderCsvMapping.NPI_HEADER,
-        'Last Name'
-    };
+    private static Integer maxFileBytes = 3 * 1024 * 1024;
 
     private static final Set<String> ACTIVE_STATUSES = new Set<String>{ STATUS_QUEUED, STATUS_RUNNING };
     private static final Set<String> PROMOTABLE_STATUSES = new Set<String>{ STATUS_COMPLETED, STATUS_COMPLETED_WITH_ERRORS };
-
-    /*
-     * Chained Queueables cannot be enqueued from a test (the platform throws), so
-     * tests drive the chain by calling processChunk() repeatedly.
-     */
-    @TestVisible
-    private static Boolean chainingEnabled = !Test.isRunningTest();
+    private static final Set<String> ENDED_JOB_STATUSES = new Set<String>{ 'Completed', 'Failed', 'Aborted' };
 
     /**
      * Starts a Run over the current version of the roster's personnel file.
@@ -145,7 +121,8 @@ public with sharing class RosterIngestionRunService {
     }
 
     /**
-     * Stops a Queued or Running Run after the chunk in progress, if any, commits.
+     * Stops a Queued or Running Run. The slice in progress, if any, still
+     * commits; later slices do nothing.
      *
      * @param runId The RosterIngestionRun__c to cancel
      * @throws RunException if the user cannot edit the roster or the Run is not active
@@ -162,109 +139,79 @@ public with sharing class RosterIngestionRunService {
         }
         lockRoster(runs[0].RosterIngestion__c);
 
-        RosterIngestionRun__c run = queryRunForUpdate(runId);
+        RosterIngestionRun__c run = [
+            SELECT Id, Status__c, Last_Job_Id__c
+            FROM RosterIngestionRun__c
+            WHERE Id = :runId
+            WITH SYSTEM_MODE
+            FOR UPDATE
+        ];
         if (!ACTIVE_STATUSES.contains(run.Status__c)) {
             throw new RunException('Only a queued or running run can be cancelled.');
         }
         finish(run, STATUS_CANCELLED, 'Cancelled by ' + UserInfo.getName() + '.');
+        abortJob(run.Last_Job_Id__c);
     }
 
     /**
-     * Processes the Run's next chunk; called once per ProviderIngestionJob.
+     * Fails active Runs whose batch job has already ended. This happens only when
+     * a job dies where ProviderIngestionBatch cannot record it, such as a governor
+     * limit in start(). Without this, such a Run would stay active and block new
+     * Runs on its roster.
      *
-     * Unexpected exceptions propagate: the job rolls the chunk back and fails the Run.
-     *
-     * @param runId The RosterIngestionRun__c
-     * @param tracker Keys and Providers claimed by the Run's earlier rows; updated in place
-     * @return MORE when another chunk was enqueued (or is due), DONE when the Run completed,
-     *         STOPPED when the Run is no longer active or failed on a file-level problem
+     * @param rosterIngestionId The roster whose Runs to check
      */
-    public static ChunkOutcome processChunk(Id runId, ProviderIngestionService.DuplicateTracker tracker) {
-        RosterIngestionRun__c run = queryRunForUpdate(runId);
-        if (!ACTIVE_STATUSES.contains(run.Status__c)) {
-            return ChunkOutcome.STOPPED;
-        }
-        if (run.Status__c == STATUS_QUEUED) {
-            run.Status__c = STATUS_RUNNING;
-            run.Started_At__c = System.now();
-        }
-
-        CsvParser.Chunk chunk;
-        List<String> headers;
-        try {
-            String csv = loadFile(run.Content_Version_Id__c);
-            headers = readHeaders(csv);
-
-            Integer offset = (run.Next_Offset__c ?? 0).intValue();
-            if (offset == 0) {
-                offset = CsvParser.parseChunk(csv, 0, 1, csvOptions()).nextOffset;
+    public static void failAbandonedRuns(Id rosterIngestionId) {
+        List<RosterIngestionRun__c> activeRuns = [
+            SELECT Id, Status__c, Last_Job_Id__c
+            FROM RosterIngestionRun__c
+            WHERE RosterIngestion__c = :rosterIngestionId AND Status__c IN :ACTIVE_STATUSES
+            WITH SYSTEM_MODE
+        ];
+        Set<Id> jobIds = new Set<Id>();
+        for (RosterIngestionRun__c run : activeRuns) {
+            if (run.Last_Job_Id__c != null) {
+                jobIds.add(run.Last_Job_Id__c);
             }
-            chunk = CsvParser.parseChunk(csv, offset, (run.Chunk_Size__c ?? DEFAULT_CHUNK_SIZE).intValue(), csvOptions());
-        } catch (RunException e) {
-            finish(run, STATUS_FAILED, e.getMessage());
-            return ChunkOutcome.STOPPED;
-        } catch (CsvParser.CsvParseException e) {
-            finish(run, STATUS_FAILED, 'The file is not valid CSV: ' + e.getMessage());
-            return ChunkOutcome.STOPPED;
         }
-
-        ChunkResults chunkResults = ingestChunk(run, headers, chunk.records, tracker);
-        applyCounters(run, chunkResults);
-        run.Next_Offset__c = chunk.nextOffset;
-        run.Next_Row_Number__c = (run.Next_Row_Number__c ?? FIRST_DATA_ROW) + chunk.records.size();
-        run.Chunk_Count__c = (run.Chunk_Count__c ?? 0) + 1;
-
-        Database.insert(chunkResults.issues, AccessLevel.SYSTEM_MODE);
-
-        if (chunk.isEndOfInput) {
-            finish(run, run.Errored__c > 0 ? STATUS_COMPLETED_WITH_ERRORS : STATUS_COMPLETED, null);
-            return ChunkOutcome.DONE;
-        }
-
-        enqueueChunk(run, tracker);
-        Database.update(run, AccessLevel.SYSTEM_MODE);
-        return ChunkOutcome.MORE;
-    }
-
-    /**
-     * Called by the finalizer when a chunk's transaction died, typically on an
-     * uncatchable LimitException. Nothing from that chunk was committed, so it
-     * is retried from the same offset with half as many rows, down to
-     * MIN_CHUNK_SIZE; below that the Run fails.
-     *
-     * @param runId The RosterIngestionRun__c
-     * @param tracker The tracker as it was when the failed chunk started
-     * @param failure Why the chunk died
-     */
-    public static void handleChunkFailure(Id runId, ProviderIngestionService.DuplicateTracker tracker, String failure) {
-        RosterIngestionRun__c run = queryRunForUpdate(runId);
-        if (!ACTIVE_STATUSES.contains(run.Status__c)) {
+        if (jobIds.isEmpty()) {
             return;
         }
 
-        Integer chunkSize = (run.Chunk_Size__c ?? DEFAULT_CHUNK_SIZE).intValue();
-        if (chunkSize <= MIN_CHUNK_SIZE) {
-            finish(run, STATUS_FAILED, 'A chunk of ' + chunkSize + ' rows starting at row ' +
-                run.Next_Row_Number__c + ' could not be processed: ' + failure);
-            return;
+        Map<Id, AsyncApexJob> endedJobsById = new Map<Id, AsyncApexJob>([
+            SELECT Id, Status, ExtendedStatus
+            FROM AsyncApexJob
+            WHERE Id IN :jobIds AND Status IN :ENDED_JOB_STATUSES
+            WITH SYSTEM_MODE
+        ]);
+        List<RosterIngestionRun__c> abandoned = new List<RosterIngestionRun__c>();
+        for (RosterIngestionRun__c run : activeRuns) {
+            AsyncApexJob job = endedJobsById.get(run.Last_Job_Id__c);
+            if (job != null) {
+                run.Status__c = STATUS_FAILED;
+                run.Completed_At__c = System.now();
+                run.Failure_Message__c = ('The batch job ended (' + job.Status + ') before the run was finished' +
+                    (String.isBlank(job.ExtendedStatus) ? '.' : ': ' + job.ExtendedStatus)).left(32768);
+                abandoned.add(run);
+            }
         }
-
-        run.Chunk_Size__c = Math.max(MIN_CHUNK_SIZE, chunkSize / 2);
-        enqueueChunk(run, tracker);
-        Database.update(run, AccessLevel.SYSTEM_MODE);
+        Database.update(abandoned, AccessLevel.SYSTEM_MODE);
     }
 
     /**
-     * Marks a Run as failed; used by the job when a chunk throws.
+     * Sets a Run's final status and saves it, with any other changes made to it.
      *
-     * @param runId The RosterIngestionRun__c
-     * @param message Why it failed
+     * @param run The Run, queried with the fields being saved
+     * @param status One of the STATUS_ values
+     * @param message Why the Run failed or was cancelled; null otherwise
      */
-    public static void failRun(Id runId, String message) {
-        RosterIngestionRun__c run = queryRunForUpdate(runId);
-        if (ACTIVE_STATUSES.contains(run.Status__c)) {
-            finish(run, STATUS_FAILED, message);
+    public static void finish(RosterIngestionRun__c run, String status, String message) {
+        run.Status__c = status;
+        run.Completed_At__c = System.now();
+        if (message != null) {
+            run.Failure_Message__c = message.left(32768);
         }
+        Database.update(run, AccessLevel.SYSTEM_MODE);
     }
 
     private static Id createRun(Id rosterIngestionId, ContentVersion version, Boolean dryRun) {
@@ -273,6 +220,7 @@ public with sharing class RosterIngestionRunService {
                 (maxFileBytes / 1024) + ' KB cannot be ingested.');
         }
 
+        failAbandonedRuns(rosterIngestionId);
         Integer activeRuns = [
             SELECT COUNT()
             FROM RosterIngestionRun__c
@@ -297,22 +245,20 @@ public with sharing class RosterIngestionRunService {
             Updated__c = 0,
             Unchanged__c = 0,
             Errored__c = 0,
-            Rows_With_Warnings__c = 0,
-            Next_Offset__c = 0,
-            Next_Row_Number__c = FIRST_DATA_ROW,
-            Chunk_Size__c = DEFAULT_CHUNK_SIZE,
-            Chunk_Count__c = 0
+            Rows_With_Warnings__c = 0
         );
         Database.insert(run, AccessLevel.SYSTEM_MODE);
 
-        run.Last_Job_Id__c = System.enqueueJob(new ProviderIngestionJob(run.Id, new ProviderIngestionService.DuplicateTracker()));
+        run.Last_Job_Id__c = Database.executeBatch(new ProviderIngestionBatch(run.Id, dryRun), BATCH_SIZE);
         Database.update(run, AccessLevel.SYSTEM_MODE);
         return run.Id;
     }
 
     /*
-     * Locks the roster so two users cannot start Runs at the same moment, after
-     * checking the user may edit it.
+     * Checks the user may edit the roster, then locks it. The lock lasts only for
+     * this transaction: it stops two simultaneous requests from both passing the
+     * "no active Run" check in createRun() before either has inserted its Run.
+     * That check is what keeps a second Run from starting while one is running.
      */
     private static RosterIngestion__c lockRoster(Id rosterIngestionId) {
         List<UserRecordAccess> access = [
@@ -337,176 +283,19 @@ public with sharing class RosterIngestionRunService {
         return rosters[0];
     }
 
-    private static RosterIngestionRun__c queryRunForUpdate(Id runId) {
-        return [
-            SELECT Id, Status__c, Dry_Run__c, Content_Version_Id__c, Started_At__c,
-                Rows_Processed__c, Inserted__c, Updated__c, Unchanged__c, Errored__c, Rows_With_Warnings__c,
-                Next_Offset__c, Next_Row_Number__c, Chunk_Size__c, Chunk_Count__c
-            FROM RosterIngestionRun__c
-            WHERE Id = :runId
-            WITH SYSTEM_MODE
-            FOR UPDATE
-        ];
-    }
-
     /*
-     * Returns the pinned file version as text. The Blob goes out of scope on
-     * return, so only the String stays on the heap.
+     * Stops the Run's batch job. The job may already have finished, in which case
+     * there is nothing to stop.
      */
-    private static String loadFile(String contentVersionId) {
-        List<ContentVersion> versions = [
-            SELECT VersionData
-            FROM ContentVersion
-            WHERE Id = :contentVersionId
-            WITH SYSTEM_MODE
-        ];
-        if (versions.isEmpty()) {
-            throw new RunException('The file version this run was started on no longer exists.');
+    private static void abortJob(Id jobId) {
+        if (jobId == null) {
+            return;
         }
-
         try {
-            return versions[0].VersionData.toString();
-        } catch (StringException e) {
-            throw new RunException('The file is not UTF-8 text. Save it as "CSV UTF-8" and upload a new version.');
+            System.abortJob(jobId);
+        } catch (Exception e) {
+            // Already finished or aborted; the Run is marked Cancelled either way.
+            return;
         }
-    }
-
-    /*
-     * The header is re-read by every chunk; it is one record, so this is cheap
-     * and keeps the Run free of parser state.
-     */
-    private static List<String> readHeaders(String csv) {
-        CsvParser.Chunk headerChunk = CsvParser.parseChunk(csv, 0, 1, csvOptions());
-        if (headerChunk.records.isEmpty()) {
-            throw new RunException('The file is empty.');
-        }
-
-        List<String> headers = CsvParser.toHeaders(headerChunk.records[0]);
-        List<String> missing = new List<String>();
-        for (String required : REQUIRED_HEADERS) {
-            if (!headers.contains(required)) {
-                missing.add('"' + required + '"');
-            }
-        }
-        if (!missing.isEmpty()) {
-            throw new RunException('The file is missing required columns: ' + String.join(missing, ', ') + '.');
-        }
-        return headers;
-    }
-
-    private static CsvParser.Options csvOptions() {
-        return new CsvParser.Options(false, true);
-    }
-
-    /*
-     * What one chunk produced: its Issue records and its outcome counts.
-     */
-    private class ChunkResults {
-        List<RosterIngestionIssue__c> issues = new List<RosterIngestionIssue__c>();
-        Map<String, Integer> countsByCounter = new Map<String, Integer>();
-
-        void count(String counter) {
-            countsByCounter.put(counter, (countsByCounter.get(counter) ?? 0) + 1);
-        }
-    }
-
-    private static ChunkResults ingestChunk(
-        RosterIngestionRun__c run,
-        List<String> headers,
-        List<List<String>> records,
-        ProviderIngestionService.DuplicateTracker tracker
-    ) {
-        ChunkResults chunkResults = new ChunkResults();
-        List<ProviderIngestionService.RowInput> rows = new List<ProviderIngestionService.RowInput>();
-        Integer rowNumber = (run.Next_Row_Number__c ?? FIRST_DATA_ROW).intValue();
-
-        for (List<String> record : records) {
-            chunkResults.count('Rows_Processed__c');
-            if (record.size() != headers.size()) {
-                chunkResults.count('Errored__c');
-                chunkResults.issues.add(newIssue(run.Id, rowNumber, SEVERITY_ERROR, CODE_COLUMN_COUNT,
-                    'The row has ' + record.size() + ' columns; the header has ' + headers.size() + '.'));
-            } else {
-                Map<String, String> values = new Map<String, String>();
-                for (Integer column = 0; column < headers.size(); column++) {
-                    values.put(headers[column], record[column]);
-                }
-                rows.add(new ProviderIngestionService.RowInput(rowNumber, values));
-            }
-            rowNumber++;
-        }
-
-        for (ProviderIngestionService.IngestResult result : ProviderIngestionService.ingestAll(rows, tracker, run.Dry_Run__c)) {
-            recordResult(run.Id, result, chunkResults);
-        }
-        return chunkResults;
-    }
-
-    private static void recordResult(Id runId, ProviderIngestionService.IngestResult result, ChunkResults chunkResults) {
-        switch on result.outcome {
-            when INSERTED {
-                chunkResults.count('Inserted__c');
-            }
-            when UPDATED {
-                chunkResults.count('Updated__c');
-            }
-            when UNCHANGED {
-                chunkResults.count('Unchanged__c');
-            }
-            when else {
-                chunkResults.count('Errored__c');
-            }
-        }
-
-        for (String error : result.errors) {
-            chunkResults.issues.add(withRow(newIssue(runId, result.rowNumber, SEVERITY_ERROR, result.errorCode, error), result));
-        }
-        for (ProviderCsvMapping.ValueWarning warning : result.valueWarnings) {
-            RosterIngestionIssue__c issue = newIssue(runId, result.rowNumber, SEVERITY_WARNING, CODE_INVALID_VALUE, warning.message);
-            issue.Column__c = warning.column.left(255);
-            chunkResults.issues.add(withRow(issue, result));
-        }
-        if (!result.valueWarnings.isEmpty()) {
-            chunkResults.count('Rows_With_Warnings__c');
-        }
-    }
-
-    private static RosterIngestionIssue__c newIssue(Id runId, Integer rowNumber, String severity, String code, String message) {
-        return new RosterIngestionIssue__c(
-            RosterIngestionRun__c = runId,
-            Row_Number__c = rowNumber,
-            Severity__c = severity,
-            Code__c = code,
-            Message__c = message?.left(32768)
-        );
-    }
-
-    private static RosterIngestionIssue__c withRow(RosterIngestionIssue__c issue, ProviderIngestionService.IngestResult result) {
-        issue.Provider__c = result.accountId;
-        issue.Unique_ID__c = result.uniqueId?.left(80);
-        issue.NPI__c = result.npi?.left(80);
-        return issue;
-    }
-
-    private static void applyCounters(RosterIngestionRun__c run, ChunkResults chunkResults) {
-        for (String counter : chunkResults.countsByCounter.keySet()) {
-            Decimal current = (Decimal) run.get(counter) ?? 0;
-            run.put(counter, current + chunkResults.countsByCounter.get(counter));
-        }
-    }
-
-    private static void enqueueChunk(RosterIngestionRun__c run, ProviderIngestionService.DuplicateTracker tracker) {
-        if (chainingEnabled) {
-            run.Last_Job_Id__c = System.enqueueJob(new ProviderIngestionJob(run.Id, tracker));
-        }
-    }
-
-    private static void finish(RosterIngestionRun__c run, String status, String message) {
-        run.Status__c = status;
-        run.Completed_At__c = System.now();
-        if (message != null) {
-            run.Failure_Message__c = message.left(32768);
-        }
-        Database.update(run, AccessLevel.SYSTEM_MODE);
     }
 }
