@@ -45,16 +45,13 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
     }
 
     private final Id runId;
-    private final Boolean dryRun;
     private List<String> headers;
 
     /**
      * @param runId The RosterIngestionRun__c to process
-     * @param dryRun true to roll back all Provider changes (see ProviderIngestionService.ingestAll)
      */
-    public ProviderIngestionBatch(Id runId, Boolean dryRun) {
+    public ProviderIngestionBatch(Id runId) {
         this.runId = runId;
-        this.dryRun = dryRun == true;
     }
 
     /**
@@ -128,7 +125,7 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
             rows.add(new ProviderIngestionService.RowInput(item.rowNumber, valuesByHeader));
         }
 
-        for (ProviderIngestionService.IngestResult result : ProviderIngestionService.ingestAll(rows, dryRun)) {
+        for (ProviderIngestionService.IngestResult result : ProviderIngestionService.ingestAll(rows)) {
             sliceResults.add(result);
         }
 

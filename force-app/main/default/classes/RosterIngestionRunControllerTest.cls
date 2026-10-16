@@ -24,25 +24,25 @@ private class RosterIngestionRunControllerTest {
     static void shouldListRuns_WhenRunStarted() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Test.startTest();
-            Id runId = RosterIngestionRunController.startRun(rosterId(), true);
+            Id runId = RosterIngestionRunController.startRun(rosterId());
             Test.stopTest();
 
             List<RosterIngestionRun__c> runs = RosterIngestionRunController.getRuns(rosterId());
             Assert.areEqual(1, runs.size(), 'One run');
             Assert.areEqual(runId, runs[0].Id, 'The started run');
             Assert.areEqual(RosterIngestionRunService.STATUS_COMPLETED, runs[0].Status__c, 'Job completed it: ' + runs[0].Failure_Message__c);
-            Assert.areEqual(1, runs[0].Inserted__c, 'Would insert one Provider');
+            Assert.areEqual(1, runs[0].Inserted__c, 'Inserted one Provider');
         }
     }
 
     @IsTest
     static void shouldThrowAuraException_WhenStartFails() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
-            RosterIngestionRunController.startRun(rosterId(), false);
+            RosterIngestionRunController.startRun(rosterId());
 
             Test.startTest();
             try {
-                RosterIngestionRunController.startRun(rosterId(), false);
+                RosterIngestionRunController.startRun(rosterId());
                 Assert.fail('Expected AuraHandledException');
             } catch (AuraHandledException e) {
                 Assert.isTrue(e.getMessage().contains('already in progress'), 'Passes the reason on: ' + e.getMessage());
@@ -52,34 +52,17 @@ private class RosterIngestionRunControllerTest {
     }
 
     @IsTest
-    static void shouldPromoteAndCancel_WhenRequested() {
+    static void shouldCancelRun_WhenRequested() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
-            Test.startTest();
-            Id dryRunId = RosterIngestionRunController.startRun(rosterId(), true);
-            Test.stopTest();
-
-            Id realRunId = RosterIngestionRunController.promote(dryRunId);
-            RosterIngestionRunController.cancel(realRunId);
-
-            RosterIngestionRun__c realRun = [SELECT Dry_Run__c, Status__c FROM RosterIngestionRun__c WHERE Id = :realRunId];
-            Assert.isFalse(realRun.Dry_Run__c, 'Promoted run is real');
-            Assert.areEqual(RosterIngestionRunService.STATUS_CANCELLED, realRun.Status__c, 'Cancelled');
-        }
-    }
-
-    @IsTest
-    static void shouldThrowAuraException_WhenPromotingRealRun() {
-        System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
-            Id runId = RosterIngestionRunController.startRun(rosterId(), false);
+            Id runId = RosterIngestionRunController.startRun(rosterId());
 
             Test.startTest();
-            try {
-                RosterIngestionRunController.promote(runId);
-                Assert.fail('Expected AuraHandledException');
-            } catch (AuraHandledException e) {
-                Assert.isTrue(e.getMessage().contains('dry run'), 'Passes the reason on: ' + e.getMessage());
-            }
+            RosterIngestionRunController.cancel(runId);
             Test.stopTest();
+
+            RosterIngestionRun__c run = [SELECT Status__c, Rows_Processed__c FROM RosterIngestionRun__c WHERE Id = :runId];
+            Assert.areEqual(RosterIngestionRunService.STATUS_CANCELLED, run.Status__c, 'Cancelled');
+            Assert.areEqual(0, run.Rows_Processed__c, 'The batch job processed nothing');
         }
     }
 
@@ -87,7 +70,7 @@ private class RosterIngestionRunControllerTest {
     static void shouldThrowAuraException_WhenCancellingFinishedRun() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Test.startTest();
-            Id runId = RosterIngestionRunController.startRun(rosterId(), true);
+            Id runId = RosterIngestionRunController.startRun(rosterId());
             Test.stopTest();
 
             try {

@@ -1,10 +1,7 @@
 <template>
     <lightning-card title="Ingestion Runs" icon-name="standard:data_streams">
         <div slot="actions">
-            <lightning-button-group>
-                <lightning-button label="Dry Run" icon-name="utility:preview" data-dry-run="true" disabled={busy} onclick={handleStart}></lightning-button>
-                <lightning-button label="Ingest" icon-name="utility:upload" variant="brand" disabled={busy} onclick={handleStart}></lightning-button>
-            </lightning-button-group>
+            <lightning-button label="Ingest" icon-name="utility:upload" variant="brand" disabled={busy} onclick={handleStart}></lightning-button>
             <lightning-button-icon
                 class="slds-var-m-left_x-small"
                 icon-name="utility:refresh"
@@ -28,9 +25,6 @@
                                 <div class="slds-col slds-grow">
                                     <a href="#" data-id={run.Id} onclick={handleOpenRun}>{run.Name}</a>
                                     <lightning-badge class={run.statusClass} label={run.Status__c}></lightning-badge>
-                                    <template lwc:if={run.Dry_Run__c}>
-                                        <lightning-badge label="Dry run"></lightning-badge>
-                                    </template>
                                     <span class="slds-text-color_weak">
                                         &nbsp;File version {run.Version_Number__c} · {run.CreatedBy.Name} ·
                                         <lightning-formatted-date-time
@@ -43,9 +37,6 @@
                                     </span>
                                 </div>
                                 <div class="slds-col slds-grow-none">
-                                    <template lwc:if={run.canPromote}>
-                                        <lightning-button label="Ingest This Version" data-id={run.Id} disabled={busy} onclick={handlePromote}></lightning-button>
-                                    </template>
                                     <template lwc:if={run.isActive}>
                                         <lightning-button label="Cancel" data-id={run.Id} disabled={busy} onclick={handleCancel}></lightning-button>
                                     </template>
@@ -61,7 +52,7 @@
             </template>
             <template lwc:else>
                 <p class="slds-text-color_weak slds-var-m-bottom_small">
-                    No runs yet. A dry run reports what ingesting the personnel file would do without changing any Provider.
+                    No runs yet. Ingest creates and updates Providers from the latest personnel file.
                 </p>
             </template>
         </div>
