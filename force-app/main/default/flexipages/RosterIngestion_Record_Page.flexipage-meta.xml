@@ -175,25 +175,16 @@
                             <value>Started_At__c</value>
                         </valueListItems>
                         <valueListItems>
-                            <value>Total_Rows__c</value>
-                        </valueListItems>
-                        <valueListItems>
-                            <value>Rows_Processed__c</value>
-                        </valueListItems>
-                        <valueListItems>
-                            <value>Inserted__c</value>
-                        </valueListItems>
-                        <valueListItems>
-                            <value>Updated__c</value>
-                        </valueListItems>
-                        <valueListItems>
-                            <value>Errored__c</value>
-                        </valueListItems>
-                        <valueListItems>
-                            <value>Rows_With_Warnings__c</value>
+                            <value>Results__c</value>
                         </valueListItems>
                         <valueListItems>
                             <value>Failure_Message__c</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>CREATEDBY_USER</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>Version_Number__c</value>
                         </valueListItems>
                     </valueList>
                 </componentInstanceProperties>
