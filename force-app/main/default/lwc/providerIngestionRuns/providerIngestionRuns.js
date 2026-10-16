@@ -1,66 +1,91 @@
 import { LightningElement, api } from 'lwc';
 import { NavigationMixin } from 'lightning/navigation';
 import { ShowToastEvent } from 'lightning/platformShowToastEvent';
+import { RefreshEvent } from 'lightning/refresh';
 import LightningConfirm from 'lightning/confirm';
-import getRuns from '@salesforce/apex/RosterIngestionRunController.getRuns';
+import getActiveRun from '@salesforce/apex/RosterIngestionRunController.getActiveRun';
 import startRun from '@salesforce/apex/RosterIngestionRunController.startRun';
 import cancel from '@salesforce/apex/RosterIngestionRunController.cancel';
 
-// Status values must match RosterIngestionRunService.STATUS_*
-const ACTIVE_STATUSES = new Set(['Queued', 'Running']);
-const STATUS_CLASSES = {
-    Completed: 'slds-theme_success',
-    'Completed with Errors': 'slds-theme_warning',
-    Failed: 'slds-theme_error'
-};
 const POLL_INTERVAL_MS = 3000;
 
+/**
+ * Provider ingestion control panel: starts and cancels Provider (personnel file)
+ * runs and shows the active run's progress, refreshing every few seconds. Finished
+ * runs are listed by the standard "Provider Ingestion Runs" related list on the
+ * same page.
+ */
 export default class ProviderIngestionRuns extends NavigationMixin(LightningElement) {
     @api recordId;
 
-    runs = [];
+    activeRun;
     busy = false;
     error;
     pollTimer;
 
     connectedCallback() {
-        this.loadRuns();
+        this.loadActiveRun();
     }
 
     disconnectedCallback() {
         this.stopPolling();
     }
 
-    // Runs progress in the background, so the list is re-queried (not cached) and polled while one is active.
-    loadRuns = async () => {
+    // Re-queried (not cached) and polled while a run is active, since it progresses in the background.
+    loadActiveRun = async () => {
+        const previousRun = this.activeRun;
         try {
-            this.runs = await getRuns({ recordId: this.recordId });
+            this.activeRun = await getActiveRun({ recordId: this.recordId });
             this.error = undefined;
         } catch (e) {
             this.error = reduceError(e);
         }
+        if (previousRun && previousRun.Id !== this.activeRun?.Id) {
+            this.handleRunEnded(previousRun);
+        }
         this.updatePolling();
     };
 
-    get hasRuns() {
-        return this.runs.length > 0;
+    get startDisabled() {
+        return this.busy || Boolean(this.activeRun);
     }
 
-    get rows() {
-        return this.runs.map((run) => ({
-            ...run,
-            isActive: ACTIVE_STATUSES.has(run.Status__c),
-            statusClass: STATUS_CLASSES[run.Status__c] ?? '',
-            summary: summarize(run)
-        }));
+    get hasTotal() {
+        return this.activeRun?.Total_Rows__c != null;
+    }
+
+    get percentDone() {
+        const total = this.activeRun?.Total_Rows__c;
+        return total ? Math.round(((this.activeRun.Rows_Processed__c ?? 0) * 100) / total) : 0;
+    }
+
+    get progressSummary() {
+        const run = this.activeRun;
+        return [
+            `${run.Rows_Processed__c ?? 0} of ${run.Total_Rows__c} rows`,
+            `${run.Inserted__c ?? 0} inserted`,
+            `${run.Updated__c ?? 0} updated`,
+            `${run.Unchanged__c ?? 0} unchanged`,
+            `${run.Errored__c ?? 0} with errors`,
+            `${run.Rows_With_Warnings__c ?? 0} with warnings`
+        ].join(' · ');
+    }
+
+    // A run that leaves the panel has finished, failed or been cancelled: refresh the page's
+    // standard components so it appears in the Provider Ingestion Runs list and the header counts.
+    // A cancel (busy) already has its own toast.
+    handleRunEnded(run) {
+        this.dispatchEvent(new RefreshEvent());
+        if (!this.busy) {
+            this.toast('info', `${run.Name} has finished. See Provider Ingestion Runs for the result.`);
+        }
     }
 
     updatePolling() {
-        const anyActive = this.runs.some((run) => ACTIVE_STATUSES.has(run.Status__c));
-        if (anyActive && !this.pollTimer) {
+        if (this.activeRun && !this.pollTimer) {
             // eslint-disable-next-line @lwc/lwc/no-async-operation
-            this.pollTimer = setInterval(this.loadRuns, POLL_INTERVAL_MS);
-        } else if (!anyActive) {
+            this.pollTimer = setInterval(this.loadActiveRun, POLL_INTERVAL_MS);
+        } else if (!this.activeRun) {
             this.stopPolling();
         }
     }
@@ -71,15 +96,18 @@ export default class ProviderIngestionRuns extends NavigationMixin(LightningElem
     }
 
     async handleStart() {
-        if (!(await confirmIngest('Ingest the latest version of the personnel file? Providers will be created and updated.'))) {
-            return;
+        const confirmed = await LightningConfirm.open({
+            message: 'Ingest the latest version of the personnel file? Providers will be created and updated.',
+            label: 'Ingest Providers',
+            theme: 'warning'
+        });
+        if (confirmed) {
+            await this.act(() => startRun({ recordId: this.recordId }), 'Ingestion started.');
         }
-        await this.act(() => startRun({ recordId: this.recordId }), 'Ingestion started.');
     }
 
-    async handleCancel(event) {
-        const runId = event.currentTarget.dataset.id;
-        await this.act(() => cancel({ runId }), 'Run cancelled. Rows already processed stay processed.');
+    async handleCancel() {
+        await this.act(() => cancel({ runId: this.activeRun.Id }), 'Run cancelled. Rows already processed stay processed.');
     }
 
     async act(action, successMessage) {
@@ -89,38 +117,23 @@ export default class ProviderIngestionRuns extends NavigationMixin(LightningElem
             this.toast('success', successMessage);
         } catch (e) {
             this.toast('error', reduceError(e));
-        } finally {
-            this.busy = false;
         }
-        await this.loadRuns();
+        await this.loadActiveRun();
+        this.busy = false;
     }
 
     handleOpenRun(event) {
         event.preventDefault();
         this[NavigationMixin.Navigate]({
             type: 'standard__recordPage',
-            attributes: { recordId: event.currentTarget.dataset.id, objectApiName: 'RosterIngestionRun__c', actionName: 'view' }
+            attributes: { recordId: this.activeRun.Id, objectApiName: 'RosterIngestionRun__c', actionName: 'view' }
         });
     }
 
     toast(variant, message) {
-        this.dispatchEvent(new ShowToastEvent({ title: variant === 'success' ? 'Roster ingestion' : 'Action failed', message, variant }));
+        const titles = { success: 'Provider ingestion', info: 'Provider ingestion', error: 'Action failed' };
+        this.dispatchEvent(new ShowToastEvent({ title: titles[variant], message, variant }));
     }
-}
-
-function summarize(run) {
-    return [
-        run.Total_Rows__c == null ? `${run.Rows_Processed__c ?? 0} rows` : `${run.Rows_Processed__c ?? 0} of ${run.Total_Rows__c} rows`,
-        `${run.Inserted__c ?? 0} inserted`,
-        `${run.Updated__c ?? 0} updated`,
-        `${run.Unchanged__c ?? 0} unchanged`,
-        `${run.Errored__c ?? 0} with errors`,
-        `${run.Rows_With_Warnings__c ?? 0} with warnings`
-    ].join(' · ');
-}
-
-function confirmIngest(message) {
-    return LightningConfirm.open({ message, label: 'Ingest Providers', theme: 'warning' });
 }
 
 function reduceError(error) {

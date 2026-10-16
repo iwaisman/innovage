@@ -1,32 +1,42 @@
 /**
- * Backs the providerIngestionRuns LWC: lists a roster's Provider (personnel
- * file) Runs, starts them and cancels them. Issues are shown on the Run record
- * page, in standard Errors and Warnings related lists.
+ * Backs the providerIngestionRuns LWC, the Provider ingestion control panel on
+ * the RosterIngestion record page: it shows the roster's active Provider
+ * (personnel file) Run, starts Runs and cancels them. Finished Runs are listed
+ * by a standard Dynamic Related List on the same page, and each Run's Issues
+ * by standard Errors and Warnings related lists on the Run record page.
  */
 public with sharing class RosterIngestionRunController {
 
     /**
+     * Fails any Run whose batch job has already ended (see
+     * RosterIngestionRunService.failAbandonedRuns), so the panel never shows a
+     * dead Run as active, then returns the active Run.
+     *
      * @param recordId A RosterIngestion__c Id
-     * @return Its Provider (personnel file) Runs, newest first. Runs of other
-     *         file types, such as a future relationships ingestion, are not listed.
+     * @return The roster's Queued or Running Provider Run, or null when none is active
      */
     @AuraEnabled
-    public static List<RosterIngestionRun__c> getRuns(Id recordId) {
+    public static RosterIngestionRun__c getActiveRun(Id recordId) {
         try {
             RosterIngestionRunService.failAbandonedRuns(recordId);
-            return [
-                SELECT Id, Name, Status__c, Version_Number__c, CreatedDate, CreatedBy.Name,
-                    Started_At__c, Completed_At__c, Total_Rows__c, Rows_Processed__c, Inserted__c, Updated__c,
-                    Unchanged__c, Errored__c, Rows_With_Warnings__c, Failure_Message__c
+            Set<String> activeStatuses = new Set<String>{
+                RosterIngestionRunService.STATUS_QUEUED,
+                RosterIngestionRunService.STATUS_RUNNING
+            };
+            List<RosterIngestionRun__c> runs = [
+                SELECT Id, Name, Status__c, Started_At__c, Total_Rows__c, Rows_Processed__c,
+                    Inserted__c, Updated__c, Unchanged__c, Errored__c, Rows_With_Warnings__c
                 FROM RosterIngestionRun__c
                 WHERE RosterIngestion__c = :recordId
                     AND File_Type__c = :RosterIngestionRunService.FILE_TYPE_PERSONNEL
+                    AND Status__c IN :activeStatuses
                 WITH USER_MODE
                 ORDER BY CreatedDate DESC
-                LIMIT 50
+                LIMIT 1
             ];
+            return runs.isEmpty() ? null : runs[0];
         } catch (QueryException e) {
-            throw newAuraException('Runs could not be loaded: ' + e.getMessage());
+            throw newAuraException('The active run could not be loaded: ' + e.getMessage());
         }
     }
 

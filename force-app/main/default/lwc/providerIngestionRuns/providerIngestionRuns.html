@@ -1,14 +1,13 @@
 <template>
-    <lightning-card title="Provider Ingestion Runs" icon-name="standard:data_streams">
+    <lightning-card title="Provider Ingestion" icon-name="standard:data_streams">
         <div slot="actions">
-            <lightning-button label="Ingest Providers" icon-name="utility:upload" variant="brand" disabled={busy} onclick={handleStart}></lightning-button>
-            <lightning-button-icon
-                class="slds-var-m-left_x-small"
-                icon-name="utility:refresh"
-                alternative-text="Refresh"
-                title="Refresh"
-                onclick={loadRuns}
-            ></lightning-button-icon>
+            <lightning-button
+                label="Ingest Providers"
+                icon-name="utility:upload"
+                variant="brand"
+                disabled={startDisabled}
+                onclick={handleStart}
+            ></lightning-button>
         </div>
         <div class="slds-var-p-horizontal_medium slds-is-relative">
             <template lwc:if={busy}>
@@ -17,42 +16,27 @@
             <template lwc:if={error}>
                 <div class="slds-text-color_error slds-var-m-bottom_small" role="alert">{error}</div>
             </template>
-            <template lwc:if={hasRuns}>
-                <ul class="slds-has-dividers_bottom-space">
-                    <template for:each={rows} for:item="run">
-                        <li key={run.Id} class="slds-item">
-                            <div class="slds-grid slds-grid_vertical-align-center slds-wrap">
-                                <div class="slds-col slds-grow">
-                                    <a href="#" data-id={run.Id} onclick={handleOpenRun}>{run.Name}</a>
-                                    <lightning-badge class={run.statusClass} label={run.Status__c}></lightning-badge>
-                                    <span class="slds-text-color_weak">
-                                        &nbsp;File version {run.Version_Number__c} · {run.CreatedBy.Name} ·
-                                        <lightning-formatted-date-time
-                                            value={run.CreatedDate}
-                                            month="short"
-                                            day="numeric"
-                                            hour="2-digit"
-                                            minute="2-digit"
-                                        ></lightning-formatted-date-time>
-                                    </span>
-                                </div>
-                                <div class="slds-col slds-grow-none">
-                                    <template lwc:if={run.isActive}>
-                                        <lightning-button label="Cancel" data-id={run.Id} disabled={busy} onclick={handleCancel}></lightning-button>
-                                    </template>
-                                </div>
-                            </div>
-                            <p class="slds-text-body_small slds-var-m-top_xx-small">{run.summary}</p>
-                            <template lwc:if={run.Failure_Message__c}>
-                                <p class="slds-text-body_small slds-text-color_error">{run.Failure_Message__c}</p>
-                            </template>
-                        </li>
-                    </template>
-                </ul>
+            <template lwc:if={activeRun}>
+                <div class="slds-grid slds-grid_vertical-align-center slds-var-m-bottom_x-small">
+                    <div class="slds-col slds-grow">
+                        <a href="#" onclick={handleOpenRun}>{activeRun.Name}</a>
+                        <span class="slds-text-color_weak">&nbsp;· {activeRun.Status__c}</span>
+                    </div>
+                    <div class="slds-col slds-grow-none">
+                        <lightning-button label="Cancel" disabled={busy} onclick={handleCancel}></lightning-button>
+                    </div>
+                </div>
+                <template lwc:if={hasTotal}>
+                    <lightning-progress-bar value={percentDone} size="large"></lightning-progress-bar>
+                    <p class="slds-text-body_small slds-var-m-vertical_x-small">{progressSummary}</p>
+                </template>
+                <template lwc:else>
+                    <p class="slds-text-body_small slds-text-color_weak slds-var-m-bottom_small">Waiting for the run to start…</p>
+                </template>
             </template>
             <template lwc:else>
                 <p class="slds-text-color_weak slds-var-m-bottom_small">
-                    No runs yet. Ingest Providers creates and updates Providers from the latest personnel file.
+                    No ingestion in progress. Finished runs are listed in Provider Ingestion Runs.
                 </p>
             </template>
         </div>

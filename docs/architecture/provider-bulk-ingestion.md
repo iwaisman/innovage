@@ -48,7 +48,7 @@ Values set in `start()` reach `execute()` only if the class implements
 
 | Class | Responsibility |
 |---|---|
-| `RosterIngestionRunController` | `@AuraEnabled` entry points for the `providerIngestionRuns` LWC: list a roster's Provider (personnel file) Runs, start, cancel. Converts `RunException` into `AuraHandledException`. |
+| `RosterIngestionRunController` | `@AuraEnabled` entry points for the `providerIngestionRuns` LWC: `getActiveRun` (first fails any stuck Run, then returns the roster's Queued or Running Provider Run, or null), `startRun` and `cancel`. Converts `RunException` into `AuraHandledException`. |
 | `RosterIngestionRunService` | The user actions: start a Run (pin the file version, create the Run, launch the batch), cancel. Also holds the shared constants, `finish()` (set a Run's final status), and `failAbandonedRuns()`. |
 | `ProviderIngestionBatch` | The processing. `start()` loads and parses the whole file; `execute()` ingests one slice of rows and records Issues and counts; `finish()` sets the final status. |
 | `ProviderIngestionService` | Row logic. `ingestAll(rows)`: maps the rows, matches them against existing Providers, and performs the inserts and updates. `ingest(row)` is the single-row form. |
@@ -65,8 +65,8 @@ Values set in `start()` reach `execute()` only if the class implements
 | `RosterIngestion__c` (display fields) | Shown on the RosterIngestion tab's list views and the record page header (compact layout). Provider Runs counts the roster's personnel-file Runs, and Last Provider Run is the latest of their start times. Both are roll-up summaries that Salesforce keeps current, so no code is involved. Personnel File Uploaded and Relationships File Uploaded are checkbox formulas. The files' names are not shown: the file fields hold a ContentDocument Id as text, which a formula cannot follow. |
 | `RosterIngestionRun__c` | One processing of one file version; a Master-Detail child of `RosterIngestion__c`. Holds the status, the pinned file version, Total Rows, the outcome counters and the batch job Id. |
 | `RosterIngestionIssue__c` | One error or warning for one CSV row; a Master-Detail child of the Run. |
-| `providerIngestionRuns` (LWC) | "Provider Ingestion Runs" panel on the RosterIngestion record page, below the Files panel. It has an *Ingest Providers* button (which asks for confirmation) and lists the roster's Provider Runs, showing "N of M rows". It polls every 3 s while a Run is active, and offers *Cancel* on an active Run. Each Run's name links to its record page. Only personnel-file Runs are listed, so a future relationships ingestion can have its own panel. |
-| `RosterIngestion_Record_Page` | The RosterIngestion record page: details, the `rosterIngestionFiles` panel and the `providerIngestionRuns` panel. |
+| `providerIngestionRuns` (LWC) | The "Provider Ingestion" control panel on the RosterIngestion record page. It has an *Ingest Providers* button, which asks for confirmation and is disabled while a run is active. While a Provider run is Queued or Running, it shows that run with a progress bar, the counts so far and a *Cancel* button, and refreshes every 3 s. When the run ends, it fires a standard page refresh so the run appears in the Provider Ingestion Runs list and the header counts update. The name is provider-specific for now; a more general name, or a second panel, will be decided when relationships ingestion is designed. |
+| `RosterIngestion_Record_Page` | The RosterIngestion record page: details, the `rosterIngestionFiles` panel, the `providerIngestionRuns` control panel, then **Provider Ingestion Runs**. That list is a standard Dynamic Related List of the roster's finished Provider runs (File Type = Personnel; Status Completed, Completed with Errors, Failed or Cancelled), newest first. It shows Name, Status, Started At, Total Rows, Rows Processed, Inserted, Updated, Errored, Rows With Warnings and Failure Message, and has no action bar. Active runs appear only in the control panel. |
 | `RosterIngestionRun_Record_Page` | The Run record page (desktop): the Run's details and counters, then **Errors** and **Warnings** tabs. Each tab is a standard Dynamic Related List of the Run's Issues, filtered by Severity and sorted by Row Number, showing Severity, Row, Code, Column, Message and Provider. View All keeps the filter and scrolls through every Issue. Standard components are preferred over custom ones here, which is why there is no custom Issues component. |
 | `Roster_Ingestion_Files` (permission set) | Grants Read on Runs and Issues and their fields, Read/Edit on RosterIngestion, and access to the controllers. |
 
@@ -74,7 +74,7 @@ Values set in `start()` reach `execute()` only if the class implements
 
 ```mermaid
 flowchart TD
-    LWC["providerIngestionRuns (LWC)"] -->|getRuns / startRun / cancel| CTRL[RosterIngestionRunController]
+    LWC["providerIngestionRuns (LWC)"] -->|getActiveRun / startRun / cancel| CTRL[RosterIngestionRunController]
     CTRL --> RUN[RosterIngestionRunService]
     RUN -->|Database.executeBatch| BATCH[ProviderIngestionBatch]
     BATCH -->|finish / constants| RUN
