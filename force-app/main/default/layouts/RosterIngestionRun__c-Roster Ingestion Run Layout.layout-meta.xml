@@ -47,6 +47,10 @@
         <layoutColumns>
             <layoutItems>
                 <behavior>Readonly</behavior>
+                <field>Results__c</field>
+            </layoutItems>
+            <layoutItems>
+                <behavior>Readonly</behavior>
                 <field>Total_Rows__c</field>
             </layoutItems>
             <layoutItems>

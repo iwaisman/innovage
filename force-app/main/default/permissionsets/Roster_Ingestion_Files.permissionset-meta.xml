@@ -98,6 +98,11 @@
     </fieldPermissions>
     <fieldPermissions>
         <editable>false</editable>
+        <field>RosterIngestionRun__c.Results__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>false</editable>
         <field>RosterIngestionRun__c.Rows_Processed__c</field>
         <readable>true</readable>
     </fieldPermissions>
