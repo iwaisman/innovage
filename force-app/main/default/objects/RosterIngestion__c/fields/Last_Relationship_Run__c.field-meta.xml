@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Last_Relationship_Run__c</fullName>
+    <description>When the most recent Relationship (relationships file) ingestion run started, for the list view and page header.</description>
+    <inlineHelpText>Start time of the latest Relationship ingestion run. Blank until a run has started.</inlineHelpText>
+    <label>Last Relationship Run</label>
+    <summarizedField>RosterIngestionRun__c.Started_At__c</summarizedField>
+    <summaryFilterItems>
+        <field>RosterIngestionRun__c.File_Type__c</field>
+        <operation>equals</operation>
+        <value>Relationships</value>
+    </summaryFilterItems>
+    <summaryForeignKey>RosterIngestionRun__c.RosterIngestion__c</summaryForeignKey>
+    <summaryOperation>max</summaryOperation>
+    <type>Summary</type>
+</CustomField>

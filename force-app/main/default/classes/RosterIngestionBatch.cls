@@ -1,5 +1,6 @@
 /**
- * Processes one RosterIngestionRun__c with Batch Apex. Salesforce calls:
+ * Processes one RosterIngestionRun__c with Batch Apex, for any file type.
+ * Salesforce calls:
  *
  *     start()    once: loads the Run's pinned file version, checks it, parses
  *                every row and returns the rows. Salesforce keeps that list.
@@ -8,25 +9,32 @@
  *                the rows and adds the slice's Issues and counts to the Run.
  *     finish()   once, after the last slice: sets the Run's final status.
  *
+ * The row processing itself belongs to the file type's RosterRowProcessor
+ * (RosterIngestionRunService.processorFor). This class only knows files,
+ * slices, Runs and Issues.
+ *
  * A slice that throws (including on a governor limit) is rolled back and the
  * job moves on to the next slice; finish() reports the rows that were not
  * processed. Re-running the file is safe: rows already ingested come out as
  * UNCHANGED.
  *
- * Database.Stateful keeps the header row, read in start(), available to every
- * execute(). The object holds nothing else that changes, so the cost of saving
- * it after each call is negligible.
+ * Database.Stateful keeps what start() works out (the header row, the
+ * processor and the Run's context) available to every execute(). All of it
+ * is small, so the cost of saving it after each call is negligible.
  */
-public with sharing class ProviderIngestionBatch implements Database.Batchable<ProviderIngestionBatch.RowItem>, Database.Stateful {
+public with sharing class RosterIngestionBatch implements Database.Batchable<RosterIngestionBatch.RowItem>, Database.Stateful {
 
     /** The largest file accepted, in data rows. start() parses the whole file in one transaction. */
     @TestVisible
     private static Integer maxRows = 5000;
 
-    private static final List<String> REQUIRED_HEADERS = new List<String>{
-        ProviderCsvMapping.UNIQUE_ID_HEADER,
-        ProviderCsvMapping.NPI_HEADER,
-        'Last Name'
+    /** Run field counting each row outcome. */
+    private static final Map<RosterIngestionRow.Outcome, String> COUNT_FIELDS_BY_OUTCOME = new Map<RosterIngestionRow.Outcome, String>{
+        RosterIngestionRow.Outcome.INSERTED => 'Inserted__c',
+        RosterIngestionRow.Outcome.UPDATED => 'Updated__c',
+        RosterIngestionRow.Outcome.TERMINATED => 'Terminated__c',
+        RosterIngestionRow.Outcome.UNCHANGED => 'Unchanged__c',
+        RosterIngestionRow.Outcome.ERROR => 'Errored__c'
     };
 
     /**
@@ -46,22 +54,24 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
 
     private final Id runId;
     private List<String> headers;
+    private RosterRowProcessor processor;
+    private RosterIngestionRow.Context context;
 
     /**
      * @param runId The RosterIngestionRun__c to process
      */
-    public ProviderIngestionBatch(Id runId) {
+    public RosterIngestionBatch(Id runId) {
         this.runId = runId;
     }
 
     /**
-     * Loads and parses the file. A problem with the file as a whole fails the
-     * Run and returns no rows, so no slice runs.
+     * Loads and parses the file and prepares the Run's context. A problem with
+     * the file as a whole fails the Run and returns no rows, so no slice runs.
      *
-     * @param context The batch context
+     * @param batchContext The batch context
      * @return Every data row of the file
      */
-    public Iterable<RowItem> start(Database.BatchableContext context) {
+    public Iterable<RowItem> start(Database.BatchableContext batchContext) {
         RosterIngestionRun__c run = queryRunForUpdate();
         if (run.Status__c != RosterIngestionRunService.STATUS_QUEUED) {
             return new List<RowItem>(); // cancelled before it started
@@ -71,17 +81,26 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
 
         List<RowItem> rows = new List<RowItem>();
         try {
+            processor = RosterIngestionRunService.processorFor(run.File_Type__c);
+
             List<List<String>> records = CsvParser.parse(
                 loadFile(run.Content_Version_Id__c),
                 new CsvParser.Options(false, true)
             );
-            headers = readHeaders(records);
+            headers = readHeaders(records, processor.requiredHeaders());
 
             Integer dataRows = records.size() - 1;
             if (dataRows > maxRows) {
                 throw new RosterIngestionRunService.RunException('The file has ' + dataRows +
                     ' rows; at most ' + maxRows + ' can be ingested.');
             }
+
+            context = new RosterIngestionRow.Context();
+            context.rosterIngestionId = run.RosterIngestion__c;
+            context.organizationId = run.RosterIngestion__r.Organization__c;
+            context.runDate = run.Started_At__c.date();
+            processor.prepare(context);
+
             for (Integer i = 1; i < records.size(); i++) {
                 rows.add(new RowItem(i + 1, records[i]));
             }
@@ -101,17 +120,17 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
     /**
      * Ingests one slice of rows and records its Issues and counts on the Run.
      *
-     * @param context The batch context
+     * @param batchContext The batch context
      * @param scope The slice's rows, in file order
      */
-    public void execute(Database.BatchableContext context, List<RowItem> scope) {
+    public void execute(Database.BatchableContext batchContext, List<RowItem> scope) {
         RosterIngestionRun__c run = queryRunForUpdate();
         if (run.Status__c != RosterIngestionRunService.STATUS_RUNNING) {
             return; // cancelled
         }
 
         SliceResults sliceResults = new SliceResults(runId);
-        List<ProviderIngestionService.RowInput> rows = new List<ProviderIngestionService.RowInput>();
+        List<RosterIngestionRow.Input> rows = new List<RosterIngestionRow.Input>();
         for (RowItem item : scope) {
             sliceResults.count('Rows_Processed__c');
             if (item.values.size() != headers.size()) {
@@ -122,11 +141,13 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
             for (Integer column = 0; column < headers.size(); column++) {
                 valuesByHeader.put(headers[column], item.values[column]);
             }
-            rows.add(new ProviderIngestionService.RowInput(item.rowNumber, valuesByHeader));
+            rows.add(new RosterIngestionRow.Input(item.rowNumber, valuesByHeader));
         }
 
-        for (ProviderIngestionService.IngestResult result : ProviderIngestionService.ingestAll(rows)) {
-            sliceResults.add(result);
+        if (!rows.isEmpty()) {
+            for (RosterIngestionRow.Result result : processor.ingestAll(rows, context)) {
+                sliceResults.add(result);
+            }
         }
 
         Database.insert(sliceResults.issues, AccessLevel.SYSTEM_MODE);
@@ -138,9 +159,9 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
      * Sets the Run's final status. Rows of a slice that failed were not counted,
      * so fewer processed rows than the file holds means part of the job failed.
      *
-     * @param context The batch context; null when a test drives the batch directly
+     * @param batchContext The batch context; null when a test drives the batch directly
      */
-    public void finish(Database.BatchableContext context) {
+    public void finish(Database.BatchableContext batchContext) {
         RosterIngestionRun__c run = queryRunForUpdate();
         if (run.Status__c != RosterIngestionRunService.STATUS_RUNNING) {
             return; // failed in start() or cancelled
@@ -153,7 +174,7 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
                 ? RosterIngestionRunService.STATUS_FAILED
                 : RosterIngestionRunService.STATUS_COMPLETED_WITH_ERRORS;
             RosterIngestionRunService.finish(run, status, missing + ' of ' + total +
-                ' rows were not processed because part of the batch job failed' + jobError(context) +
+                ' rows were not processed because part of the batch job failed' + jobError(batchContext) +
                 ' Re-running the file is safe: rows already ingested will be unchanged.');
             return;
         }
@@ -167,8 +188,10 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
 
     private RosterIngestionRun__c queryRunForUpdate() {
         return [
-            SELECT Id, Status__c, Content_Version_Id__c, Started_At__c, Total_Rows__c,
-                Rows_Processed__c, Inserted__c, Updated__c, Unchanged__c, Errored__c, Rows_With_Warnings__c
+            SELECT Id, Status__c, File_Type__c, Content_Version_Id__c, Started_At__c, Total_Rows__c,
+                RosterIngestion__c, RosterIngestion__r.Organization__c,
+                Rows_Processed__c, Inserted__c, Updated__c, Terminated__c, Unchanged__c, Errored__c,
+                Rows_With_Warnings__c
             FROM RosterIngestionRun__c
             WHERE Id = :runId
             WITH SYSTEM_MODE
@@ -198,14 +221,14 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
         }
     }
 
-    private static List<String> readHeaders(List<List<String>> records) {
+    private static List<String> readHeaders(List<List<String>> records, List<String> requiredHeaders) {
         if (records.isEmpty()) {
             throw new RosterIngestionRunService.RunException('The file is empty.');
         }
 
         List<String> headers = CsvParser.toHeaders(records[0]);
         List<String> missing = new List<String>();
-        for (String required : REQUIRED_HEADERS) {
+        for (String required : requiredHeaders) {
             if (!headers.contains(required)) {
                 missing.add('"' + required + '"');
             }
@@ -216,14 +239,14 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
         return headers;
     }
 
-    private static String jobError(Database.BatchableContext context) {
-        if (context == null) {
+    private static String jobError(Database.BatchableContext batchContext) {
+        if (batchContext == null) {
             return '.';
         }
         List<AsyncApexJob> jobs = [
             SELECT ExtendedStatus
             FROM AsyncApexJob
-            WHERE Id = :context.getJobId()
+            WHERE Id = :batchContext.getJobId()
             WITH SYSTEM_MODE
         ];
         String error = jobs.isEmpty() ? null : jobs[0].ExtendedStatus;
@@ -252,36 +275,26 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
                 'The row has ' + item.values.size() + ' columns; the header has ' + headerCount + '.'));
         }
 
-        void add(ProviderIngestionService.IngestResult result) {
-            switch on result.outcome {
-                when INSERTED {
-                    count('Inserted__c');
-                }
-                when UPDATED {
-                    count('Updated__c');
-                }
-                when UNCHANGED {
-                    count('Unchanged__c');
-                }
-                when else {
-                    count('Errored__c');
-                }
-            }
+        void add(RosterIngestionRow.Result result) {
+            count(COUNT_FIELDS_BY_OUTCOME.get(result.outcome));
 
             for (String error : result.errors) {
-                issues.add(withRowKeys(newIssue(result.rowNumber, RosterIngestionRunService.SEVERITY_ERROR, result.errorCode, error), result));
+                issues.add(withRowValues(
+                    newIssue(result.rowNumber, RosterIngestionRunService.SEVERITY_ERROR, result.errorCode, error),
+                    result
+                ));
             }
-            for (ProviderCsvMapping.ValueWarning warning : result.valueWarnings) {
+            for (RosterIngestionRow.Warning warning : result.warnings) {
                 RosterIngestionIssue__c issue = newIssue(
                     result.rowNumber,
                     RosterIngestionRunService.SEVERITY_WARNING,
-                    RosterIngestionRunService.CODE_INVALID_VALUE,
+                    warning.code,
                     warning.message
                 );
-                issue.Column__c = warning.column.left(255);
-                issues.add(withRowKeys(issue, result));
+                issue.Column__c = warning.column?.left(255);
+                issues.add(withRowValues(issue, result));
             }
-            if (!result.valueWarnings.isEmpty()) {
+            if (!result.warnings.isEmpty()) {
                 count('Rows_With_Warnings__c');
             }
         }
@@ -303,10 +316,16 @@ public with sharing class ProviderIngestionBatch implements Database.Batchable<P
             );
         }
 
-        private RosterIngestionIssue__c withRowKeys(RosterIngestionIssue__c issue, ProviderIngestionService.IngestResult result) {
-            issue.Provider__c = result.accountId;
-            issue.Unique_ID__c = result.uniqueId?.left(80);
-            issue.NPI__c = result.npi?.left(80);
+        /* Copies the row's key values onto the Issue, cutting text to the field's length. */
+        private RosterIngestionIssue__c withRowValues(RosterIngestionIssue__c issue, RosterIngestionRow.Result result) {
+            for (Schema.SObjectField field : result.issueValuesByField.keySet()) {
+                Object value = result.issueValuesByField.get(field);
+                Integer maxLength = field.getDescribe().getLength();
+                if (value instanceof String && maxLength > 0) {
+                    value = ((String) value).left(maxLength);
+                }
+                issue.put(field, value);
+            }
             return issue;
         }
     }

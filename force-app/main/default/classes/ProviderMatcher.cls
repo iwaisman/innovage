@@ -371,6 +371,7 @@ public without sharing class ProviderMatcher {
             );
         }
 
+        // If we don't have multiple matches then get whichever one did match
         Account matched = byUniqueId ?? byNpi;
         if (matched == null) {
             return AccountMatchResult.noMatch();

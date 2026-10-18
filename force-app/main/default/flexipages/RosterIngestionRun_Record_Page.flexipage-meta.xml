@@ -91,6 +91,9 @@
                         <valueListItems>
                             <value>Provider__c</value>
                         </valueListItems>
+                        <valueListItems>
+                            <value>Facility__c</value>
+                        </valueListItems>
                     </valueList>
                 </componentInstanceProperties>
                 <componentInstanceProperties>
@@ -171,6 +174,9 @@
                         </valueListItems>
                         <valueListItems>
                             <value>Provider__c</value>
+                        </valueListItems>
+                        <valueListItems>
+                            <value>Facility__c</value>
                         </valueListItems>
                     </valueList>
                 </componentInstanceProperties>

@@ -334,7 +334,19 @@ public inherited sharing class ProviderCsvMapping {
     }
 
     private static Date parsePastDate(String value) {
-        Matcher matcher = DATE_FORMAT.matcher(value);
+        Date parsed = parseDate(value);
+        return parsed != null && parsed < Date.today() ? parsed : null;
+    }
+
+    /**
+     * @param value A date as MM/DD/YYYY (leading zeros optional); surrounding whitespace is ignored
+     * @return The date, or null when the value is blank or not a real date
+     */
+    public static Date parseDate(String value) {
+        if (String.isBlank(value)) {
+            return null;
+        }
+        Matcher matcher = DATE_FORMAT.matcher(value.trim());
         if (!matcher.matches()) {
             return null;
         }
@@ -346,9 +358,7 @@ public inherited sharing class ProviderCsvMapping {
         if (month < 1 || month > 12 || day < 1 || day > Date.daysInMonth(year, month)) {
             return null;
         }
-
-        Date parsed = Date.newInstance(year, month, day);
-        return parsed < Date.today() ? parsed : null;
+        return Date.newInstance(year, month, day);
     }
 
     private static String normalizeSsn(String value) {

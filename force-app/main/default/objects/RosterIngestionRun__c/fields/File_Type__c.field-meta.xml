@@ -14,6 +14,11 @@
                 <default>true</default>
                 <label>Personnel</label>
             </value>
+            <value>
+                <fullName>Relationships</fullName>
+                <default>false</default>
+                <label>Relationships</label>
+            </value>
         </valueSetDefinition>
     </valueSet>
 </CustomField>

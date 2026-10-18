@@ -2,13 +2,14 @@
 <LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">
     <apiVersion>67.0</apiVersion>
     <isExposed>true</isExposed>
-    <masterLabel>Provider Ingestion</masterLabel>
-    <description>Start or cancel a Provider ingestion of the roster's personnel file and follow the active run's progress. Finished runs are listed by a standard related list.</description>
+    <masterLabel>Roster Ingestion Panel</masterLabel>
+    <description>Start or cancel an ingestion of one of the roster's files (personnel or relationships) and follow the active run's progress. Place one per file type; finished runs are listed by a standard related list.</description>
     <targets>
         <target>lightning__RecordPage</target>
     </targets>
     <targetConfigs>
         <targetConfig targets="lightning__RecordPage">
+            <property name="fileType" type="String" label="File Type" datasource="Personnel,Relationships" default="Personnel" required="true" description="Which of the roster's files this panel ingests."/>
             <objects>
                 <object>RosterIngestion__c</object>
             </objects>

@@ -71,19 +71,19 @@ private class RosterIngestionRunServiceTest {
     }
 
     /*
-     * Runs ProviderIngestionBatch the way Salesforce does (start, execute per
+     * Runs RosterIngestionBatch the way Salesforce does (start, execute per
      * slice, finish), but directly: a test may run only one execute() of a real
      * batch job. Slices listed in skippedSlices are not executed, as if they had
      * failed. The job queued by startRun() still runs at Test.stopTest(), finds the
      * Run already finished and does nothing.
      */
     private static void runToCompletion(Id runId, Integer sliceSize, Set<Integer> skippedSlices) {
-        ProviderIngestionBatch batch = new ProviderIngestionBatch(runId);
+        RosterIngestionBatch batch = new RosterIngestionBatch(runId);
 
-        List<ProviderIngestionBatch.RowItem> rows = (List<ProviderIngestionBatch.RowItem>) batch.start(null);
+        List<RosterIngestionBatch.RowItem> rows = (List<RosterIngestionBatch.RowItem>) batch.start(null);
         Integer sliceCount = (rows.size() + sliceSize - 1) / sliceSize;
         for (Integer slice = 0; slice < sliceCount; slice++) {
-            List<ProviderIngestionBatch.RowItem> scope = new List<ProviderIngestionBatch.RowItem>();
+            List<RosterIngestionBatch.RowItem> scope = new List<RosterIngestionBatch.RowItem>();
             for (Integer i = slice * sliceSize; i < Math.min((slice + 1) * sliceSize, rows.size()); i++) {
                 scope.add(rows[i]);
             }
@@ -197,6 +197,98 @@ private class RosterIngestionRunServiceTest {
         }
     }
 
+    @IsTest
+    static void shouldIngestRelationshipsFile() {
+        RelationshipTestDataFactory.createOwnershipRoles();
+        Id organizationId = [SELECT Organization__c FROM RosterIngestion__c LIMIT 1].Organization__c;
+        Account facility = RelationshipTestDataFactory.createFacility('Run Facility', organizationId, null, null);
+        Account provider = RelationshipTestDataFactory.createProvider('RunRelationship', ProviderTestDataFactory.npi(7001));
+        RelationshipTestDataFactory.createRelationship(provider, facility, null);
+        Account second = RelationshipTestDataFactory.createProvider('RunRelationship2', ProviderTestDataFactory.npi(7002));
+
+        /*
+         * 2: Terminate All the existing relationship -> TERMINATED
+         * 3: create for the second Provider          -> INSERTED
+         * 4: unknown facility                         -> ERROR
+         */
+        String csv = ProviderTestDataFactory.toCsv(RelationshipCsvMapping.HEADERS, new List<Map<String, String>>{
+            RelationshipTestDataFactory.row(provider.NPI__c, '', 'All'),
+            RelationshipTestDataFactory.row(second.NPI__c, facility.InnovAge_Unique_ID__c, ''),
+            RelationshipTestDataFactory.row(second.NPI__c, 'MF999999999zzz', '')
+        });
+
+        System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
+            RelationshipTestDataFactory.uploadRelationshipsFile(roster(), Blob.valueOf(csv));
+            Id runId = RosterIngestionRunService.startRun(roster().Id, RosterIngestionRunService.FILE_TYPE_RELATIONSHIPS);
+
+            Test.startTest();
+            runToCompletion(runId, RosterIngestionRunService.BATCH_SIZE);
+            Test.stopTest();
+
+            RosterIngestionRun__c run = [
+                SELECT Status__c, File_Type__c, Failure_Message__c, Total_Rows__c, Inserted__c, Terminated__c, Errored__c
+                FROM RosterIngestionRun__c
+                WHERE Id = :runId
+            ];
+            Assert.areEqual(RosterIngestionRunService.FILE_TYPE_RELATIONSHIPS, run.File_Type__c, 'File type recorded');
+            Assert.areEqual(RosterIngestionRunService.STATUS_COMPLETED_WITH_ERRORS, run.Status__c, 'Failure: ' + run.Failure_Message__c);
+            Assert.areEqual(3, run.Total_Rows__c, 'Total rows');
+            Assert.areEqual(1, run.Terminated__c, 'Terminated');
+            Assert.areEqual(1, run.Inserted__c, 'Inserted');
+            Assert.areEqual(1, run.Errored__c, 'Errored');
+
+            RosterIngestionIssue__c issue = [
+                SELECT Row_Number__c, Code__c, Provider__c, Facility_Unique_ID__c
+                FROM RosterIngestionIssue__c
+                WHERE RosterIngestionRun__c = :runId
+            ];
+            Assert.areEqual(4, issue.Row_Number__c, 'Row 4 failed');
+            Assert.areEqual(FacilityMatcher.UNKNOWN_FACILITY_UNIQUE_ID, issue.Code__c, 'Unknown facility');
+            Assert.areEqual(second.Id, issue.Provider__c, 'Issue links the Provider');
+            Assert.areEqual('MF999999999zzz', issue.Facility_Unique_ID__c, 'Issue keeps the facility key');
+        }
+    }
+
+    @IsTest
+    static void shouldFailRelationshipsRun_WhenRequiredHeaderMissing() {
+        System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
+            RelationshipTestDataFactory.uploadRelationshipsFile(roster(), Blob.valueOf('"Individual NPI","Terminate"\r\n"1234567893",""\r\n'));
+            Id runId = RosterIngestionRunService.startRun(roster().Id, RosterIngestionRunService.FILE_TYPE_RELATIONSHIPS);
+
+            Test.startTest();
+            runToCompletion(runId, RosterIngestionRunService.BATCH_SIZE);
+            Test.stopTest();
+
+            RosterIngestionRun__c run = reload(runId);
+            Assert.areEqual(RosterIngestionRunService.STATUS_FAILED, run.Status__c, 'File-level problem fails the run');
+            Assert.isTrue(run.Failure_Message__c.contains('"Facility Unique ID"'), 'Names a missing column: ' + run.Failure_Message__c);
+        }
+    }
+
+    @IsTest
+    static void shouldRefuseToStart_WhenRosterHasNoRelationshipsFile() {
+        System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
+            try {
+                RosterIngestionRunService.startRun(roster().Id, RosterIngestionRunService.FILE_TYPE_RELATIONSHIPS);
+                Assert.fail('Expected RunException');
+            } catch (RosterIngestionRunService.RunException e) {
+                Assert.isTrue(e.getMessage().contains('no relationships file'), 'Explains why: ' + e.getMessage());
+            }
+        }
+    }
+
+    @IsTest
+    static void shouldRefuseToStart_WhenFileTypeUnknown() {
+        System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
+            try {
+                RosterIngestionRunService.startRun(roster().Id, 'Billing');
+                Assert.fail('Expected RunException');
+            } catch (RosterIngestionRunService.RunException e) {
+                Assert.isTrue(e.getMessage().contains('Unknown file type'), 'Explains why: ' + e.getMessage());
+            }
+        }
+    }
+
     // ─── File-level failures ───────────────────────────────────────────
 
     private static RosterIngestionRun__c runFile(Blob body) {
@@ -253,7 +345,7 @@ private class RosterIngestionRunServiceTest {
     @IsTest
     static void shouldFailRun_WhenFileHasTooManyRows() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
-            ProviderIngestionBatch.maxRows = 3;
+            RosterIngestionBatch.maxRows = 3;
             Id runId = RosterIngestionRunService.startRun(roster().Id);
 
             Test.startTest();

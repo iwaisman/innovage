@@ -23,10 +23,10 @@ private class RosterIngestionRunControllerTest {
     @IsTest
     static void shouldReturnActiveRun_WhenRunQueued() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
-            Id runId = RosterIngestionRunController.startRun(rosterId());
+            Id runId = RosterIngestionRunController.startRun(rosterId(), RosterIngestionRunService.FILE_TYPE_PERSONNEL);
 
             Test.startTest();
-            RosterIngestionRun__c active = RosterIngestionRunController.getActiveRun(rosterId());
+            RosterIngestionRun__c active = RosterIngestionRunController.getActiveRun(rosterId(), RosterIngestionRunService.FILE_TYPE_PERSONNEL);
             Test.stopTest();
 
             Assert.areEqual(runId, active?.Id, 'The queued run is active');
@@ -38,10 +38,10 @@ private class RosterIngestionRunControllerTest {
     static void shouldReturnNoActiveRun_WhenRunFinished() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Test.startTest();
-            Id runId = RosterIngestionRunController.startRun(rosterId());
+            Id runId = RosterIngestionRunController.startRun(rosterId(), RosterIngestionRunService.FILE_TYPE_PERSONNEL);
             Test.stopTest();
 
-            Assert.isNull(RosterIngestionRunController.getActiveRun(rosterId()), 'A finished run is not active');
+            Assert.isNull(RosterIngestionRunController.getActiveRun(rosterId(), RosterIngestionRunService.FILE_TYPE_PERSONNEL), 'A finished run is not active');
             RosterIngestionRun__c run = [SELECT Status__c, Inserted__c FROM RosterIngestionRun__c WHERE Id = :runId];
             Assert.areEqual(RosterIngestionRunService.STATUS_COMPLETED, run.Status__c, 'Job completed it');
             Assert.areEqual(1, run.Inserted__c, 'Inserted one Provider');
@@ -52,7 +52,7 @@ private class RosterIngestionRunControllerTest {
     static void shouldFailStuckRun_WhenActiveRunRequested() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Test.startTest();
-            Id runId = RosterIngestionRunController.startRun(rosterId());
+            Id runId = RosterIngestionRunController.startRun(rosterId(), RosterIngestionRunService.FILE_TYPE_PERSONNEL);
             Test.stopTest();
             // As if the batch job had died without recording it.
             Database.update(
@@ -60,7 +60,7 @@ private class RosterIngestionRunControllerTest {
                 AccessLevel.SYSTEM_MODE
             );
 
-            RosterIngestionRun__c active = RosterIngestionRunController.getActiveRun(rosterId());
+            RosterIngestionRun__c active = RosterIngestionRunController.getActiveRun(rosterId(), RosterIngestionRunService.FILE_TYPE_PERSONNEL);
 
             Assert.isNull(active, 'The stuck run is no longer shown as active');
             Assert.areEqual(
@@ -74,11 +74,11 @@ private class RosterIngestionRunControllerTest {
     @IsTest
     static void shouldThrowAuraException_WhenStartFails() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
-            RosterIngestionRunController.startRun(rosterId());
+            RosterIngestionRunController.startRun(rosterId(), RosterIngestionRunService.FILE_TYPE_PERSONNEL);
 
             Test.startTest();
             try {
-                RosterIngestionRunController.startRun(rosterId());
+                RosterIngestionRunController.startRun(rosterId(), RosterIngestionRunService.FILE_TYPE_PERSONNEL);
                 Assert.fail('Expected AuraHandledException');
             } catch (AuraHandledException e) {
                 Assert.isTrue(e.getMessage().contains('already in progress'), 'Passes the reason on: ' + e.getMessage());
@@ -90,7 +90,7 @@ private class RosterIngestionRunControllerTest {
     @IsTest
     static void shouldCancelRun_WhenRequested() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
-            Id runId = RosterIngestionRunController.startRun(rosterId());
+            Id runId = RosterIngestionRunController.startRun(rosterId(), RosterIngestionRunService.FILE_TYPE_PERSONNEL);
 
             Test.startTest();
             RosterIngestionRunController.cancel(runId);
@@ -106,7 +106,7 @@ private class RosterIngestionRunControllerTest {
     static void shouldThrowAuraException_WhenCancellingFinishedRun() {
         System.runAs(ProviderTestDataFactory.ingestionUser(USER_LAST_NAME)) {
             Test.startTest();
-            Id runId = RosterIngestionRunController.startRun(rosterId());
+            Id runId = RosterIngestionRunController.startRun(rosterId(), RosterIngestionRunService.FILE_TYPE_PERSONNEL);
             Test.stopTest();
 
             try {

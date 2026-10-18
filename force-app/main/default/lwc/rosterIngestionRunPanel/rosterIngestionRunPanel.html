@@ -1,8 +1,8 @@
 <template>
-    <lightning-card title="Provider Ingestion" icon-name="standard:data_streams">
+    <lightning-card title={labels.title} icon-name="standard:data_streams">
         <div slot="actions">
             <lightning-button
-                label="Ingest Providers"
+                label={labels.startLabel}
                 icon-name="utility:upload"
                 variant="brand"
                 disabled={startDisabled}
@@ -35,9 +35,7 @@
                 </template>
             </template>
             <template lwc:else>
-                <p class="slds-text-color_weak slds-var-m-bottom_small">
-                    No ingestion in progress. Finished runs are listed in Provider Ingestion Runs.
-                </p>
+                <p class="slds-text-color_weak slds-var-m-bottom_small">{idleMessage}</p>
             </template>
         </div>
     </lightning-card>

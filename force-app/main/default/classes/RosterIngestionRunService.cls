@@ -1,13 +1,15 @@
 /**
- * The user-facing actions on a RosterIngestionRun__c: start a Run over a
- * roster's personnel file, and cancel a Run.
- * The processing itself is ProviderIngestionBatch.
+ * The user-facing actions on a RosterIngestionRun__c: start a Run over one of
+ * a roster's files (personnel or relationships), and cancel a Run.
+ * The processing itself is RosterIngestionBatch, with the file type's
+ * RosterRowProcessor (processorFor).
  *
  * A Run is pinned to one file version (ContentVersion) when it starts, so
  * uploading a new version while it runs has no effect on it. Only one Run per
- * roster may be active (Queued or Running) at a time.
+ * roster may be active (Queued or Running) at a time, whatever its file type;
+ * different rosters run independently.
  *
- * See docs/architecture/provider-bulk-ingestion.md for how the pieces fit
+ * See docs/architecture/roster-ingestion.md for how the pieces fit
  * together.
  *
  * Starting and cancelling check the user's access to the roster.
@@ -27,6 +29,13 @@ public with sharing class RosterIngestionRunService {
     public static final String STATUS_CANCELLED = 'Cancelled';
 
     public static final String FILE_TYPE_PERSONNEL = 'Personnel';
+    public static final String FILE_TYPE_RELATIONSHIPS = 'Relationships';
+
+    /* The RosterIngestion__c field holding each file type's ContentDocument Id. */
+    private static final Map<String, Schema.SObjectField> FILE_FIELDS_BY_TYPE = new Map<String, Schema.SObjectField>{
+        FILE_TYPE_PERSONNEL => RosterIngestion__c.Personnel_File__c,
+        FILE_TYPE_RELATIONSHIPS => RosterIngestion__c.Relationships_File__c
+    };
 
     public static final String SEVERITY_ERROR = 'Error';
     public static final String SEVERITY_WARNING = 'Warning';
@@ -34,7 +43,7 @@ public with sharing class RosterIngestionRunService {
     public static final String CODE_INVALID_VALUE = 'INVALID_VALUE';
 
     /*
-     * Rows per execute() of ProviderIngestionBatch. 200 rows cost about 3 s of
+     * Rows per execute() of RosterIngestionBatch. 200 rows cost about 3 s of
      * the 60 s async CPU limit in the innovage sandbox (2026-10-14), including
      * the org's Account automation.
      */
@@ -43,7 +52,7 @@ public with sharing class RosterIngestionRunService {
     /*
      * A guard against files too large to parse in one transaction, checked
      * before the job starts. The real limit is the row count, checked by
-     * ProviderIngestionBatch.start().
+     * RosterIngestionBatch.start().
      */
     @TestVisible
     private static Integer maxFileBytes = 3 * 1024 * 1024;
@@ -56,31 +65,65 @@ public with sharing class RosterIngestionRunService {
      *
      * @param rosterIngestionId The RosterIngestion__c record
      * @return The new RosterIngestionRun__c Id
-     * @throws RunException if the user cannot edit the roster, it has no personnel file,
-     *         the file is too large, or a Run is already active
-     * @example
-     * Id runId = RosterIngestionRunService.startRun(rosterIngestionId);
+     * @throws RunException see startRun(Id, String)
      */
     public static Id startRun(Id rosterIngestionId) {
+        return startRun(rosterIngestionId, FILE_TYPE_PERSONNEL);
+    }
+
+    /**
+     * Starts a Run over the current version of one of the roster's files.
+     *
+     * @param rosterIngestionId The RosterIngestion__c record
+     * @param fileType FILE_TYPE_PERSONNEL or FILE_TYPE_RELATIONSHIPS
+     * @return The new RosterIngestionRun__c Id
+     * @throws RunException if the file type is unknown, the user cannot edit the roster,
+     *         it has no file of that type, the file is too large, or a Run is already active
+     * @example
+     * Id runId = RosterIngestionRunService.startRun(rosterIngestionId, RosterIngestionRunService.FILE_TYPE_RELATIONSHIPS);
+     */
+    public static Id startRun(Id rosterIngestionId, String fileType) {
+        Schema.SObjectField fileField = FILE_FIELDS_BY_TYPE.get(fileType);
+        if (fileField == null) {
+            throw new RunException('Unknown file type "' + fileType + '".');
+        }
+
         RosterIngestion__c roster = lockRoster(rosterIngestionId);
-        if (String.isBlank(roster.Personnel_File__c)) {
-            throw new RunException('This roster has no personnel file.');
+        String documentId = (String) roster.get(fileField);
+        String fileName = fileType.toLowerCase() + ' file';
+        if (String.isBlank(documentId)) {
+            throw new RunException('This roster has no ' + fileName + '.');
         }
 
         List<ContentVersion> versions = [
             SELECT Id, ContentDocumentId, VersionNumber, Checksum, ContentSize
             FROM ContentVersion
-            WHERE ContentDocumentId = :roster.Personnel_File__c AND IsLatest = TRUE
+            WHERE ContentDocumentId = :documentId AND IsLatest = TRUE
             WITH USER_MODE
         ];
         if (versions.isEmpty()) {
-            throw new RunException('The personnel file was not found or is not accessible.');
+            throw new RunException('The ' + fileName + ' was not found or is not accessible.');
         }
 
-        return createRun(roster.Id, versions[0]);
+        return createRun(roster.Id, fileType, versions[0]);
     }
 
-    private static Id createRun(Id rosterIngestionId, ContentVersion version) {
+    /**
+     * @param fileType A Run's File_Type__c
+     * @return The row processing for that file type
+     * @throws RunException if the file type is unknown
+     */
+    public static RosterRowProcessor processorFor(String fileType) {
+        if (fileType == FILE_TYPE_PERSONNEL) {
+            return new ProviderIngestionService.Processor();
+        }
+        if (fileType == FILE_TYPE_RELATIONSHIPS) {
+            return new RelationshipIngestionService.Processor();
+        }
+        throw new RunException('Unknown file type "' + fileType + '".');
+    }
+
+    private static Id createRun(Id rosterIngestionId, String fileType, ContentVersion version) {
         if (version.ContentSize > maxFileBytes) {
             throw new RunException('The file is ' + (version.ContentSize / 1024) + ' KB; files over ' +
                 (maxFileBytes / 1024) + ' KB cannot be ingested.');
@@ -99,7 +142,7 @@ public with sharing class RosterIngestionRunService {
 
         RosterIngestionRun__c run = new RosterIngestionRun__c(
             RosterIngestion__c = rosterIngestionId,
-            File_Type__c = FILE_TYPE_PERSONNEL,
+            File_Type__c = fileType,
             Content_Document_Id__c = version.ContentDocumentId,
             Content_Version_Id__c = version.Id,
             Version_Number__c = version.VersionNumber,
@@ -108,13 +151,14 @@ public with sharing class RosterIngestionRunService {
             Rows_Processed__c = 0,
             Inserted__c = 0,
             Updated__c = 0,
+            Terminated__c = 0,
             Unchanged__c = 0,
             Errored__c = 0,
             Rows_With_Warnings__c = 0
         );
         Database.insert(run, AccessLevel.SYSTEM_MODE);
 
-        run.Last_Job_Id__c = Database.executeBatch(new ProviderIngestionBatch(run.Id), BATCH_SIZE);
+        run.Last_Job_Id__c = Database.executeBatch(new RosterIngestionBatch(run.Id), BATCH_SIZE);
         Database.update(run, AccessLevel.SYSTEM_MODE);
         return run.Id;
     }
@@ -141,7 +185,7 @@ public with sharing class RosterIngestionRunService {
         }
 
         List<RosterIngestion__c> rosters = [
-            SELECT Id, Personnel_File__c
+            SELECT Id, Personnel_File__c, Relationships_File__c
             FROM RosterIngestion__c
             WHERE Id = :rosterIngestionId
             WITH USER_MODE
@@ -188,7 +232,7 @@ public with sharing class RosterIngestionRunService {
 
     /**
      * Fails active Runs whose batch job has already ended. This happens only when
-     * a job dies where ProviderIngestionBatch cannot record it, such as a governor
+     * a job dies where RosterIngestionBatch cannot record it, such as a governor
      * limit in start(). Without this, such a Run would stay active and block new
      * Runs on its roster.
      *

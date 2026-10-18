@@ -1,18 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Results__c</fullName>
-    <description>One-line summary of the run's row counts for the Provider Ingestion Runs list, so a single column replaces six. Example: "5000 rows · 4966 new · 34 err · 44 warn". Counts of zero are left out. The rows part reads "1200 of 5000 rows" when not every row was processed (cancelled run or failed slice), and is left out when the file was never parsed (Total Rows 0). The individual count fields remain the source for sorting, filtering and reports.</description>
+    <description>One-line summary of the run's row counts for the ingestion run lists, so a single column replaces seven. Example: "5000 rows · 4966 new · 34 err · 44 warn"; term = rows that terminated relationships. Counts of zero are left out. The rows part reads "1200 of 5000 rows" when not every row was processed (cancelled run or failed slice), and is left out when the file was never parsed (Total Rows 0). The individual count fields remain the source for sorting, filtering and reports.</description>
     <formula><![CDATA[IF(Total_Rows__c = 0, "",
     IF(Rows_Processed__c < Total_Rows__c,
         TEXT(Rows_Processed__c) & " of " & TEXT(Total_Rows__c) & " rows",
         TEXT(Total_Rows__c) & " rows"))
 & IF(Inserted__c > 0, " · " & TEXT(Inserted__c) & " new", "")
 & IF(Updated__c > 0, " · " & TEXT(Updated__c) & " upd", "")
+& IF(Terminated__c > 0, " · " & TEXT(Terminated__c) & " term", "")
 & IF(Unchanged__c > 0, " · " & TEXT(Unchanged__c) & " same", "")
 & IF(Errored__c > 0, " · " & TEXT(Errored__c) & " err", "")
 & IF(Rows_With_Warnings__c > 0, " · " & TEXT(Rows_With_Warnings__c) & " warn", "")]]></formula>
     <formulaTreatBlanksAs>BlankAsZero</formulaTreatBlanksAs>
-    <inlineHelpText>Rows in the file, then: new = Providers inserted, upd = updated, same = unchanged, err = rows not ingested because of an error, warn = rows with at least one ignored value. Zero counts are not shown.</inlineHelpText>
+    <inlineHelpText>Rows in the file, then: new = Providers or relationships created, upd = updated, term = rows that terminated relationships, same = unchanged, err = rows not ingested because of an error, warn = rows with at least one ignored value. Zero counts are not shown.</inlineHelpText>
     <label>Results</label>
     <type>Text</type>
 </CustomField>

@@ -9,14 +9,32 @@ import cancel from '@salesforce/apex/RosterIngestionRunController.cancel';
 
 const POLL_INTERVAL_MS = 3000;
 
+/* The wording for each file type. listLabel must match the related list's label on the page. */
+const LABELS = {
+    Personnel: {
+        title: 'Provider Ingestion',
+        startLabel: 'Ingest Providers',
+        confirmMessage: 'Ingest the latest version of the personnel file? Providers will be created and updated.',
+        listLabel: 'Provider Ingestion Runs'
+    },
+    Relationships: {
+        title: 'Relationship Ingestion',
+        startLabel: 'Ingest Relationships',
+        confirmMessage:
+            'Ingest the latest version of the relationships file? Relationships between Providers and facilities will be created and terminated.',
+        listLabel: 'Relationship Ingestion Runs'
+    }
+};
+
 /**
- * Provider ingestion control panel: starts and cancels Provider (personnel file)
- * runs and shows the active run's progress, refreshing every few seconds. Finished
- * runs are listed by the standard "Provider Ingestion Runs" related list on the
- * same page.
+ * Ingestion control panel for one of the roster's files (the fileType property,
+ * set in App Builder): starts and cancels runs of that file and shows the active
+ * run's progress, refreshing every few seconds. Finished runs are listed by a
+ * standard related list on the same page.
  */
-export default class ProviderIngestionRuns extends NavigationMixin(LightningElement) {
+export default class RosterIngestionRunPanel extends NavigationMixin(LightningElement) {
     @api recordId;
+    @api fileType = 'Personnel';
 
     activeRun;
     busy = false;
@@ -35,7 +53,7 @@ export default class ProviderIngestionRuns extends NavigationMixin(LightningElem
     loadActiveRun = async () => {
         const previousRun = this.activeRun;
         try {
-            this.activeRun = await getActiveRun({ recordId: this.recordId });
+            this.activeRun = await getActiveRun({ recordId: this.recordId, fileType: this.fileType });
             this.error = undefined;
         } catch (e) {
             this.error = reduceError(e);
@@ -45,6 +63,14 @@ export default class ProviderIngestionRuns extends NavigationMixin(LightningElem
         }
         this.updatePolling();
     };
+
+    get labels() {
+        return LABELS[this.fileType] ?? LABELS.Personnel;
+    }
+
+    get idleMessage() {
+        return `No ingestion in progress. Finished runs are listed in ${this.labels.listLabel}.`;
+    }
 
     get startDisabled() {
         return this.busy || Boolean(this.activeRun);
@@ -65,6 +91,7 @@ export default class ProviderIngestionRuns extends NavigationMixin(LightningElem
             `${run.Rows_Processed__c ?? 0} of ${run.Total_Rows__c} rows`,
             `${run.Inserted__c ?? 0} inserted`,
             `${run.Updated__c ?? 0} updated`,
+            ...(this.fileType === 'Relationships' ? [`${run.Terminated__c ?? 0} terminated`] : []),
             `${run.Unchanged__c ?? 0} unchanged`,
             `${run.Errored__c ?? 0} with errors`,
             `${run.Rows_With_Warnings__c ?? 0} with warnings`
@@ -72,12 +99,12 @@ export default class ProviderIngestionRuns extends NavigationMixin(LightningElem
     }
 
     // A run that leaves the panel has finished, failed or been cancelled: refresh the page's
-    // standard components so it appears in the Provider Ingestion Runs list and the header counts.
+    // standard components so it appears in the runs list and the header counts.
     // A cancel (busy) already has its own toast.
     handleRunEnded(run) {
         this.dispatchEvent(new RefreshEvent());
         if (!this.busy) {
-            this.toast('info', `${run.Name} has finished. See Provider Ingestion Runs for the result.`);
+            this.toast('info', `${run.Name} has finished. See ${this.labels.listLabel} for the result.`);
         }
     }
 
@@ -97,12 +124,12 @@ export default class ProviderIngestionRuns extends NavigationMixin(LightningElem
 
     async handleStart() {
         const confirmed = await LightningConfirm.open({
-            message: 'Ingest the latest version of the personnel file? Providers will be created and updated.',
-            label: 'Ingest Providers',
+            message: this.labels.confirmMessage,
+            label: this.labels.startLabel,
             theme: 'warning'
         });
         if (confirmed) {
-            await this.act(() => startRun({ recordId: this.recordId }), 'Ingestion started.');
+            await this.act(() => startRun({ recordId: this.recordId, fileType: this.fileType }), 'Ingestion started.');
         }
     }
 
@@ -131,7 +158,7 @@ export default class ProviderIngestionRuns extends NavigationMixin(LightningElem
     }
 
     toast(variant, message) {
-        const titles = { success: 'Provider ingestion', info: 'Provider ingestion', error: 'Action failed' };
+        const titles = { success: this.labels.title, info: this.labels.title, error: 'Action failed' };
         this.dispatchEvent(new ShowToastEvent({ title: titles[variant], message, variant }));
     }
 }

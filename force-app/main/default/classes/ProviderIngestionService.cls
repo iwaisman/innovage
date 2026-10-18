@@ -12,7 +12,7 @@
  * DUPLICATES: rows are not checked against each other. Several rows referring
  * to the same Provider are accepted (a stakeholder decision, see
  * docs/plans/provider-bulk-ingestion.md); what happens depends on whether they
- * are in the same ingestAll() call (one slice of ProviderIngestionBatch) or not:
+ * are in the same ingestAll() call (one slice of RosterIngestionBatch) or not:
  *
  *   - Different calls: each row is matched against the database as it is at
  *     that moment, so a row that inserts a Provider is followed by later rows
@@ -118,6 +118,66 @@ public with sharing class ProviderIngestionService {
             errorCode = code;
             errors.add(message);
         }
+    }
+
+    /**
+     * Personnel file rows for RosterIngestionBatch: runs ingestAll() and turns
+     * each IngestResult into the shared result the batch records.
+     */
+    public class Processor implements RosterRowProcessor {
+        public List<String> requiredHeaders() {
+            return new List<String>{ ProviderCsvMapping.UNIQUE_ID_HEADER, ProviderCsvMapping.NPI_HEADER, 'Last Name' };
+        }
+
+        public void prepare(RosterIngestionRow.Context context) {
+            // Providers are global: they need nothing about the Run.
+            return;
+        }
+
+        public List<RosterIngestionRow.Result> ingestAll(
+            List<RosterIngestionRow.Input> rows,
+            RosterIngestionRow.Context context
+        ) {
+            List<RowInput> inputs = new List<RowInput>();
+            for (RosterIngestionRow.Input row : rows) {
+                inputs.add(new RowInput(row.rowNumber, row.values));
+            }
+
+            List<RosterIngestionRow.Result> results = new List<RosterIngestionRow.Result>();
+            for (IngestResult result : ProviderIngestionService.ingestAll(inputs)) {
+                results.add(toRowResult(result));
+            }
+            return results;
+        }
+    }
+
+    private static RosterIngestionRow.Result toRowResult(IngestResult result) {
+        RosterIngestionRow.Result row = new RosterIngestionRow.Result(result.rowNumber);
+        switch on result.outcome {
+            when INSERTED {
+                row.succeed(RosterIngestionRow.Outcome.INSERTED);
+            }
+            when UPDATED {
+                row.succeed(RosterIngestionRow.Outcome.UPDATED);
+            }
+            when UNCHANGED {
+                row.succeed(RosterIngestionRow.Outcome.UNCHANGED);
+            }
+            when else {
+                for (String error : result.errors) {
+                    row.fail(result.errorCode, error);
+                }
+            }
+        }
+
+        for (ProviderCsvMapping.ValueWarning warning : result.valueWarnings) {
+            row.warn(RosterIngestionRunService.CODE_INVALID_VALUE, warning.column, warning.message);
+        }
+
+        row.putIssueValue(RosterIngestionIssue__c.Provider__c, result.accountId);
+        row.putIssueValue(RosterIngestionIssue__c.Unique_ID__c, result.uniqueId);
+        row.putIssueValue(RosterIngestionIssue__c.NPI__c, result.npi);
+        return row;
     }
 
     /**

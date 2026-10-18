@@ -3,7 +3,7 @@
 Status: implemented, then **revised on 2026-10-15 to use Batch Apex** (see
 section 11). Sections 1–9 describe the original Queueable-chain design and are
 kept as history. For the current design, see
-[docs/architecture/provider-bulk-ingestion.md](../architecture/provider-bulk-ingestion.md).
+[docs/architecture/roster-ingestion.md](../architecture/roster-ingestion.md).
 
 ## 1. Summary
 

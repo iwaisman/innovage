@@ -1,7 +1,8 @@
 /**
- * Backs the providerIngestionRuns LWC, the Provider ingestion control panel on
- * the RosterIngestion record page: it shows the roster's active Provider
- * (personnel file) Run, starts Runs and cancels them. Finished Runs are listed
+ * Backs the rosterIngestionRunPanel LWC, the ingestion control panel on the
+ * RosterIngestion record page. The page has one panel per file type
+ * (personnel, relationships): each shows the roster's active Run of its type,
+ * starts Runs and cancels them. Finished Runs are listed
  * by a standard Dynamic Related List on the same page, and each Run's Issues
  * by standard Errors and Warnings related lists on the Run record page.
  */
@@ -13,10 +14,11 @@ public with sharing class RosterIngestionRunController {
      * dead Run as active, then returns the active Run.
      *
      * @param recordId A RosterIngestion__c Id
-     * @return The roster's Queued or Running Provider Run, or null when none is active
+     * @param fileType A RosterIngestionRun__c.File_Type__c value
+     * @return The roster's Queued or Running Run of that file type, or null when none is active
      */
     @AuraEnabled
-    public static RosterIngestionRun__c getActiveRun(Id recordId) {
+    public static RosterIngestionRun__c getActiveRun(Id recordId, String fileType) {
         try {
             RosterIngestionRunService.failAbandonedRuns(recordId);
             Set<String> activeStatuses = new Set<String>{
@@ -25,10 +27,10 @@ public with sharing class RosterIngestionRunController {
             };
             List<RosterIngestionRun__c> runs = [
                 SELECT Id, Name, Status__c, Started_At__c, Total_Rows__c, Rows_Processed__c,
-                    Inserted__c, Updated__c, Unchanged__c, Errored__c, Rows_With_Warnings__c
+                    Inserted__c, Updated__c, Terminated__c, Unchanged__c, Errored__c, Rows_With_Warnings__c
                 FROM RosterIngestionRun__c
                 WHERE RosterIngestion__c = :recordId
-                    AND File_Type__c = :RosterIngestionRunService.FILE_TYPE_PERSONNEL
+                    AND File_Type__c = :fileType
                     AND Status__c IN :activeStatuses
                 WITH USER_MODE
                 ORDER BY CreatedDate DESC
@@ -42,12 +44,13 @@ public with sharing class RosterIngestionRunController {
 
     /**
      * @param recordId A RosterIngestion__c Id
+     * @param fileType A RosterIngestionRun__c.File_Type__c value
      * @return The new Run Id
      */
     @AuraEnabled
-    public static Id startRun(Id recordId) {
+    public static Id startRun(Id recordId, String fileType) {
         try {
-            return RosterIngestionRunService.startRun(recordId);
+            return RosterIngestionRunService.startRun(recordId, fileType);
         } catch (RosterIngestionRunService.RunException e) {
             throw newAuraException(e.getMessage());
         }
