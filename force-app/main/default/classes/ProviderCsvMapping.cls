@@ -18,7 +18,15 @@ public inherited sharing class ProviderCsvMapping {
     public static final String UNIQUE_ID_HEADER = 'Provider Unique ID';
     public static final String NPI_HEADER = 'Individual NPI';
 
-    public enum ValueType { TEXT, PICKLIST, PHONE, EMAIL, PAST_DATE, SSN, NPI, STATE, ZIP }
+    /*
+     * Separates the values of a multi-select picklist column in the CSV, e.g.
+     * "Polish;Spanish". Agreed as ";" for now (2026-10-19); change it here if the
+     * file format changes. Salesforce itself always stores multi-select values
+     * separated by ";", whatever this is.
+     */
+    public static final String MULTI_PICKLIST_SEPARATOR = ';';
+
+    public enum ValueType { TEXT, PICKLIST, MULTI_PICKLIST, PHONE, EMAIL, PAST_DATE, SSN, NPI, STATE, ZIP }
 
     public enum UpdatePolicy { OVERWRITE, FILL_IF_BLANK, INSERT_ONLY }
 
@@ -101,6 +109,13 @@ public inherited sharing class ProviderCsvMapping {
         new FieldMapping(NPI_HEADER, Account.NPI__c, ValueType.NPI, UpdatePolicy.FILL_IF_BLANK),
         new FieldMapping('Provider Phone', Account.Phone, ValueType.PHONE, UpdatePolicy.OVERWRITE),
         new FieldMapping('Provider Email', Account.PersonEmail, ValueType.EMAIL, UpdatePolicy.OVERWRITE),
+        new FieldMapping('Gender Identification', Account.PersonGender, ValueType.PICKLIST, UpdatePolicy.OVERWRITE),
+        new FieldMapping('Pronouns', Account.PersonPronouns, ValueType.PICKLIST, UpdatePolicy.OVERWRITE),
+        // Both language fields default to English, so they are never blank: FILL_IF_BLANK would never apply.
+        new FieldMapping('Primary Provider Language', Account.Primary_Language__c, ValueType.PICKLIST, UpdatePolicy.OVERWRITE),
+        new FieldMapping(
+            'Secondary Provider Language(s)', Account.Secondary_Languages__c, ValueType.MULTI_PICKLIST, UpdatePolicy.OVERWRITE
+        ),
 
         new FieldMapping('Salutation', Account.Salutation, ValueType.PICKLIST, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('First Name', Account.FirstName, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
@@ -131,12 +146,16 @@ public inherited sharing class ProviderCsvMapping {
         // "VFY_Account | Auto Create CAQH" flow, which currently fails inside the Verifiable
         // package (ExtProvProfileVerifiableTrigger NullPointerException) and blocks the insert.
         new FieldMapping('Medicare ID', Account.Medicare_ID__c, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
+        new FieldMapping('Medicaid ID', Account.Medicaid_ID__pc, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Medicaid ID State', Account.Medicaid_ID_State__c, ValueType.STATE, UpdatePolicy.INSERT_ONLY)
+        // 'Initial Credentialing Date' / 'Last Credentialing Date' are deliberately unmapped until the
+        // stakeholders decide: setting Initial_Credentialing_Approval__pc starts Verifiable credentialing flows.
     };
 
     private static final Map<ValueType, String> INVALID_REASONS_BY_TYPE = new Map<ValueType, String>{
         ValueType.TEXT => 'not valid text',
         ValueType.PICKLIST => 'not one of the allowed values',
+        ValueType.MULTI_PICKLIST => 'not a list of allowed values separated by "' + MULTI_PICKLIST_SEPARATOR + '"',
         ValueType.PHONE => 'not a 10-digit US phone number',
         ValueType.EMAIL => 'not a valid email address',
         ValueType.PAST_DATE => 'not a valid MM/DD/YYYY date in the past',
@@ -251,6 +270,10 @@ public inherited sharing class ProviderCsvMapping {
             when EMAIL, PICKLIST, STATE {
                 return stored.equalsIgnoreCase(incoming);
             }
+            when MULTI_PICKLIST {
+                // The same values in any order are not a change.
+                return new Set<String>(stored.toLowerCase().split(';')).equals(new Set<String>(incoming.toLowerCase().split(';')));
+            }
             when else {
                 return stored.equals(incoming);
             }
@@ -275,6 +298,9 @@ public inherited sharing class ProviderCsvMapping {
         switch on mapping.valueType {
             when PICKLIST {
                 return activePicklistValue(mapping.field, value);
+            }
+            when MULTI_PICKLIST {
+                return multiPicklistValue(mapping.field, value);
             }
             when PHONE {
                 return normalizePhone(value);
@@ -315,6 +341,30 @@ public inherited sharing class ProviderCsvMapping {
             picklistValuesByField.put(field, valuesByLowerCase);
         }
         return picklistValuesByField.get(field).get(value.toLowerCase());
+    }
+
+    /*
+     * Splits the CSV value on MULTI_PICKLIST_SEPARATOR and matches each part to an
+     * active value, ignoring case, blanks and repeats. Returns the values joined the
+     * way Salesforce stores them (";"), or null when any part is not allowed: the
+     * whole value is then dropped rather than written partly.
+     */
+    private static String multiPicklistValue(Schema.SObjectField field, String value) {
+        List<String> values = new List<String>();
+        Set<String> seen = new Set<String>();
+        for (String part : value.split(Pattern.quote(MULTI_PICKLIST_SEPARATOR))) {
+            if (String.isBlank(part)) {
+                continue;
+            }
+            String allowed = activePicklistValue(field, part.trim());
+            if (allowed == null) {
+                return null;
+            }
+            if (seen.add(allowed)) {
+                values.add(allowed);
+            }
+        }
+        return values.isEmpty() ? null : String.join(values, ';');
     }
 
     private static String normalizePhone(String value) {

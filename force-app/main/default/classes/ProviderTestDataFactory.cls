@@ -87,7 +87,12 @@ public class ProviderTestDataFactory {
             'Provider Billing Zip' => '80301',
             'CAQH ID' => '12345678',
             'Medicare ID' => 'CO1234567',
+            'Medicaid ID' => 'MCD12345',
             'Medicaid ID State' => 'CO',
+            'Gender Identification' => 'female',
+            'Pronouns' => 'She/Her',
+            'Primary Provider Language' => 'polish',
+            'Secondary Provider Language(s)' => 'Spanish;German',
             'Provider Effective Date' => '01/01/2026'
         };
     }

@@ -70,7 +70,7 @@ row processor and the Run's context.
 | Class | Responsibility |
 |---|---|
 | `ProviderIngestionService` | Row logic. `ingestAll(rows)`: maps the rows, matches them against existing Providers, and performs the inserts and updates. `ingest(row)` is the single-row form. Its `Processor` adapts it to `RosterRowProcessor`. |
-| `ProviderCsvMapping` | Maps CSV headers to Account fields. Validates and normalizes values (phone, email, dates, SSN, NPI, state, ZIP) and defines each field's update policy (OVERWRITE, FILL_IF_BLANK, INSERT_ONLY). Invalid values are dropped as warnings. `parseDate` is shared with the relationships file. |
+| `ProviderCsvMapping` | Maps CSV headers to Account fields. Validates and normalizes values (phone, email, dates, SSN, NPI, state, ZIP, picklists, and multi-select picklists split on `MULTI_PICKLIST_SEPARATOR`, currently `;`) and defines each field's update policy (OVERWRITE, FILL_IF_BLANK, INSERT_ONLY). Invalid values are dropped as warnings. `parseDate` is shared with the relationships file. The full column list is in [docs/specs/personnel-file-mapping.csv](../specs/personnel-file-mapping.csv). |
 | `ProviderMatcher` | `matchAll(requests)`: finds the existing Provider for each row by Unique ID and/or NPI, with **one** query for all rows. Used by both file types. |
 | `AccountMatchResult` | The outcome of matching one row: UNIQUE_MATCH, NO_MATCH, or an error outcome. |
 | `InnovAgeUniqueId` | Parses and validates an InnovAge Unique ID (prefix + 9-digit auto-number + 3-character Id suffix; `P` for Providers, `MF` for facilities). |

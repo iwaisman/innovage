@@ -6,6 +6,10 @@ non-real: SSNs use the 9xx area (never issued), phones use the 555-01xx
 fictional range, and emails use example.com. NPIs are random but carry a
 valid Luhn check digit so they pass format validation.
 
+Gender, pronouns and languages use values the org's picklists accept (see
+docs/specs/personnel-file-mapping.csv); secondary languages are separated by
+";" (ProviderCsvMapping.MULTI_PICKLIST_SEPARATOR).
+
 Provider Unique ID is left blank: ingestion requires a supplied Unique ID to
 identify an existing Provider, so generated rows describe new Providers and are
 matched by NPI. To exercise the update path, pass --existing-ids with real
@@ -83,16 +87,24 @@ LAST_NAMES = [
     "Andersen", "Kowalski", "Lopez", "Tanaka", "Murphy", "Singh",
 ]
 SUFFIXES = ["MD", "DO", "NP", "RN", "PA-C", "LCSW", "PhD", "DPM"]
+# Values of the org's PersonGender and PersonPronouns picklists (blank = not given).
 GENDERS = [
     ("Female", "She/Her"),
+    ("Female", "She/They"),
     ("Male", "He/Him"),
-    ("Non-binary", "They/Them"),
-    ("Prefer not to say", ""),
+    ("Male", "He/They"),
+    ("Other", "They/Them"),
+    ("Other", "Not Listed"),
+    ("Unknown", ""),
+    ("", ""),
 ]
+# All are values of the org's language picklists (Primary_Language__c, Secondary_Languages__c).
 LANGUAGES = [
     "English", "Spanish", "French", "Vietnamese", "Mandarin", "Russian",
-    "Arabic", "Korean", "Tagalog", "Amharic",
+    "Arabic", "Korean", "Tagalog", "Amharic", "Polish", "Hindi",
 ]
+# Separates secondary languages; must match ProviderCsvMapping.MULTI_PICKLIST_SEPARATOR.
+LANGUAGE_SEPARATOR = ";"
 SPECIALTIES = [
     "Internal Medicine", "Family Medicine", "Geriatric Medicine", "Cardiology",
     "Psychiatry", "Podiatry", "Physical Therapy", "Occupational Therapy",
@@ -210,7 +222,7 @@ def generate_row(index: int, existing: tuple = None) -> dict:
         "Provider Fax": generate_phone() if random.random() < 0.7 else "",
         "Provider Email": f"{first.lower()}.{last.lower()}{index}@example.com",
         "Primary Provider Language": primary_language,
-        "Secondary Provider Language(s)": ", ".join(secondary),
+        "Secondary Provider Language(s)": LANGUAGE_SEPARATOR.join(secondary),
         "Provider Mailing Address Line 1": mailing["line1"],
         "Provider Mailing Address Line 2": mailing["line2"],
         "Provider Mailing City": mailing["city"],
@@ -301,9 +313,33 @@ def _cred_order(row):
     return "Last Credentialing Date before Initial Credentialing Date"
 
 
+def _bad_gender(row):
+    row["Gender Identification"] = random.choice(["Non-binary", "Prefer not to say", "F"])
+    return "Gender Identification not an allowed value"
+
+
+def _bad_pronouns(row):
+    row["Pronouns"] = random.choice(["Ze/Zir", "she", "Any"])
+    return "Pronouns not an allowed value"
+
+
+def _bad_language(row):
+    row["Primary Provider Language"] = random.choice(["Klingon", "Eng", "Español"])
+    return "Primary Provider Language not an allowed value"
+
+
+def _bad_secondary_languages(row):
+    row["Secondary Provider Language(s)"] = random.choice([
+        "Spanish, French",  # wrong separator: read as one unknown language
+        LANGUAGE_SEPARATOR.join(["Spanish", "Elvish"]),  # one unknown language drops the whole cell
+    ])
+    return "Secondary Provider Language(s) with an unknown language or the wrong separator"
+
+
 ERROR_INJECTORS = [
     _bad_npi, _short_npi, _bad_dob, _future_dob, _missing_required, _bad_ssn,
     _bad_state, _bad_zip, _bad_email, _bad_line_type, _cred_order, _bad_unique_id,
+    _bad_gender, _bad_pronouns, _bad_language, _bad_secondary_languages,
 ]
 
 

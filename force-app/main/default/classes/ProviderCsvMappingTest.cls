@@ -34,6 +34,41 @@ private class ProviderCsvMappingTest {
         Assert.areEqual('100 Main St\nSuite 200', values.get(Account.PersonMailingStreet), 'Address lines are joined');
         Assert.areEqual('200 Oak Ave', values.get(Account.BillingStreet), 'A blank second line is omitted');
         Assert.areEqual('80202-1234', values.get(Account.PersonMailingPostalCode), 'ZIP+4 is accepted');
+        Assert.areEqual('Female', values.get(Account.PersonGender), 'Gender takes the defined casing');
+        Assert.areEqual('She/Her', values.get(Account.PersonPronouns), 'Pronouns are mapped');
+        Assert.areEqual('Polish', values.get(Account.Primary_Language__c), 'Primary language is mapped');
+        Assert.areEqual('Spanish;German', values.get(Account.Secondary_Languages__c), 'Secondary languages are split, matched and re-joined');
+        Assert.areEqual('MCD12345', values.get(Account.Medicaid_ID__pc), 'Medicaid ID is mapped');
+    }
+
+    @IsTest
+    static void shouldIgnoreBlanksAndRepeats_InMultiPicklist() {
+        Test.startTest();
+        ProviderCsvMapping.MappedRow mapped = mapWith('Secondary Provider Language(s)', 'polish; ;POLISH;Spanish;');
+        Test.stopTest();
+
+        Assert.areEqual('Polish;Spanish', mapped.valuesByField.get(Account.Secondary_Languages__c), 'Each value once, in file order');
+    }
+
+    @IsTest
+    static void shouldDropWholeMultiPicklist_WhenAnyValueNotAllowed() {
+        assertDropped('Secondary Provider Language(s)', 'Spanish;Klingon', Account.Secondary_Languages__c);
+    }
+
+    @IsTest
+    static void shouldDropPicklist_WhenGenderNotAnAllowedValue() {
+        assertDropped('Gender Identification', 'Prefer not to say', Account.PersonGender);
+    }
+
+    @IsTest
+    static void shouldCompareMultiPicklistsIgnoringOrderAndCase() {
+        Test.startTest();
+        Boolean same = ProviderCsvMapping.isSameValue(ProviderCsvMapping.ValueType.MULTI_PICKLIST, 'Spanish;Polish', 'polish;spanish');
+        Boolean different = ProviderCsvMapping.isSameValue(ProviderCsvMapping.ValueType.MULTI_PICKLIST, 'Spanish', 'Spanish;Polish');
+        Test.stopTest();
+
+        Assert.isTrue(same, 'Order and case are not changes');
+        Assert.isFalse(different, 'An added language is a change');
     }
 
     @IsTest
@@ -168,7 +203,11 @@ private class ProviderCsvMappingTest {
         Set<String> fieldNames = ProviderCsvMapping.getUpdatableFieldNames();
         Test.stopTest();
 
-        Assert.areEqual(new Set<String>{ 'NPI__c', 'Phone', 'PersonEmail' }, fieldNames, 'Only NPI, Phone and Email can change');
+        Assert.areEqual(
+            new Set<String>{ 'NPI__c', 'Phone', 'PersonEmail', 'PersonGender', 'PersonPronouns', 'Primary_Language__c', 'Secondary_Languages__c' },
+            fieldNames,
+            'Only NPI, Phone, Email, gender, pronouns and languages can change'
+        );
     }
 
     @IsTest

@@ -1,0 +1,20 @@
+Topic,Rule,Details
+File format,UTF-8 CSV,Save from Excel as 'CSV UTF-8'. Other encodings fail the whole run. Standard CSV quoting (RFC 4180).
+File format,First row is the header,"Spreadsheet row numbers are used in Issues, with the header as row 1."
+File format,Column names must match exactly,Case and spacing matter. Unknown columns are ignored without a warning.
+File format,Required columns,"Provider Unique ID, Individual NPI and Last Name must be present in the header, otherwise the whole run fails. Their values may be blank on any row."
+File format,Every row has the same number of columns as the header,A row with a different count is a row error (COLUMN_COUNT) and is skipped.
+Limits,"At most 5,000 data rows",Larger files fail the run before any row is processed.
+Limits,At most 3 MB,"Checked before the run starts. A 5,000-row file is about 1.7 MB."
+Matching,"A row is matched to an existing Provider by Provider Unique ID, or by Individual NPI",At least one of the two is required (otherwise row error NO_KEY_VALUES). A given Unique ID must exist. If both are given they must identify the same Provider.
+Matching,No match means a new Provider,"A row with no Unique ID whose NPI matches no one creates a Provider (record type Provider, a person account). It needs a Last Name."
+Updates,Blank values never overwrite or clear anything,A blank cell leaves the stored value as it is.
+Updates,Each field has a role,"Update: overwritten when the file's value differs (Phone, Email, Gender Identification, Pronouns, Primary and Secondary Provider Language). Fill if blank (NPI only): written only when the stored value is blank. Insert only: written when the Provider is created, never changed afterwards."
+Validation,"Invalid values are dropped, not fatal","An invalid phone, email, date, state, ZIP, SSN, picklist or language value is ignored with a warning (INVALID_VALUE); the rest of the row is still ingested. Exception: a malformed Unique ID or NPI is a row error, because they decide which Provider the row is."
+Validation,Several values in one cell are separated by ;,"Applies to Secondary Provider Language(s), e.g. Polish;Spanish. Blank entries and repeats are ignored; if any value is not allowed, the whole cell is ignored with a warning."
+Outcomes,"Every row ends as Inserted, Updated, Unchanged or Error","Errors and warnings are recorded as Issues on the Run, with row number, code, column and message. The Run's Results column summarizes the counts."
+Duplicates,Rows are not checked against each other,"Two rows for the same Provider are both applied, in file order. Two rows creating the same new Provider in the same 200-row slice: the second fails with SAVE_ERROR (NPI is unique)."
+Runs,One run per roster at a time,A run processes the file version that was current when it started; uploading a new version does not affect it. Runs can be cancelled; rows already processed stay processed.
+Runs,Re-running a file is safe,Rows already ingested come out as Unchanged.
+Privacy,Sensitive values never appear in messages,Issue messages never contain field values such as SSN or date of birth.
+Access,Who can run it,Users who can edit the roster can start and cancel runs. Seeing Runs and Issues needs the Roster_Ingestion_Files permission set. Providers are matched and written regardless of the user's own access to them.
