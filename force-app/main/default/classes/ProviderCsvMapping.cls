@@ -142,9 +142,14 @@ public inherited sharing class ProviderCsvMapping {
         new FieldMapping('Provider Billing State', Account.BillingState, ValueType.STATE, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Provider Billing Zip', Account.BillingPostalCode, ValueType.ZIP, UpdatePolicy.INSERT_ONLY),
 
-        // 'CAQH ID' => CAQH_ID__pc is deliberately unmapped for now: setting it fires the
-        // "VFY_Account | Auto Create CAQH" flow, which currently fails inside the Verifiable
-        // package (ExtProvProfileVerifiableTrigger NullPointerException) and blocks the insert.
+        // The "VFY_Account | Auto Create CAQH" flow, which failed inside the Verifiable package
+        // when this was set, was deactivated on 2026-10-20 (docs/issues/caqh-verifiable-flow-failure.md).
+        // KNOWN RISK (accepted 2026-10-20): CAQH IDs are not checked for duplicates. The org's
+        // "Sync Individual Provider to Healthcare Provider" flow copies CAQH_ID__pc to the unique
+        // HealthcareProvider.CaqhIdentifier on every Account update, so if two Providers share a CAQH
+        // ID, any later update of the second (even a phone change) fails with DUPLICATE_VALUE on
+        // CaqhIdentifier, reported as a SAVE_ERROR naming that flow.
+        new FieldMapping('CAQH ID', Account.CAQH_ID__pc, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Medicare ID', Account.Medicare_ID__c, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Medicaid ID', Account.Medicaid_ID__pc, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Medicaid ID State', Account.Medicaid_ID_State__c, ValueType.STATE, UpdatePolicy.INSERT_ONLY)

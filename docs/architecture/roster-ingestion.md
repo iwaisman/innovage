@@ -280,6 +280,34 @@ What happens depends on whether the duplicate rows land in the same slice:
 | Same slice, new Provider | All are planned as inserts; the database rejects all but the first because `NPI__c` is unique (SAVE_ERROR). |
 | Same slice, existing Provider | The rows' changes are merged into one update, because Salesforce rejects a DML list holding the same Id twice. Each row reports its own changes; the last row wins a field that several rows change. |
 
+### Known risk: two Providers with the same CAQH ID
+
+CAQH IDs are **not checked for duplicates**. This risk was accepted on
+2026-10-20, on the understanding that CAQH IDs are unique in real roster files.
+If two Providers do end up sharing one, the failure is delayed and confusing:
+
+1. Both Providers are created normally. The CAQH ID is insert-only, and nothing
+   checks it on insert.
+2. The org flow **"Sync Individual Provider to Healthcare Provider"** runs on
+   every **update** of a Provider Account. It copies `CAQH_ID__pc` to the
+   Provider's `HealthcareProvider.CaqhIdentifier`, which is a **unique** field.
+   The first Provider's next update therefore stores the ID there.
+3. From then on, **every update of the second Provider fails**, even one that
+   has nothing to do with CAQH. For example, a later roster file that only
+   changes its phone number gets a SAVE_ERROR whose message is about another
+   record:
+
+   > We can't save this record because the "Sync Individual Provider to
+   > Healthcare Provider" process failed. … DUPLICATE_VALUE: duplicate value
+   > found: CaqhIdentifier duplicates value on record with id: 0cm…
+
+   The same happens to manual edits in the UI.
+
+**To fix the data:** correct or clear the CAQH ID on one of the two Provider
+Accounts. The Id in the message is the *other* Provider's HealthcareProvider.
+Details are in
+[docs/issues/caqh-verifiable-flow-failure.md](../issues/caqh-verifiable-flow-failure.md).
+
 ## 7. Relationships file: inside a slice (`RelationshipIngestionService.ingestAll`)
 
 A relationship is a `HealthcarePractitionerFacility` (HPF) linking a Provider's
@@ -389,6 +417,7 @@ single-line address.
 | Invalid value in a personnel field (bad phone, ZIP, …) | `ProviderCsvMapping` | The value is dropped and a **Warning** Issue (INVALID_VALUE) is recorded. The rest of the row is ingested. |
 | Malformed relationship start date on a create row | `RelationshipIngestionService` | An **Error** Issue (INVALID_START_DATE); the row is not ingested. Terminate rows ignore the start date. |
 | Row cannot be matched or saved | matchers / services | An **Error** Issue is recorded with a code (a match outcome, MISSING_LAST_NAME, a facility code, SAVE_ERROR, COLUMN_COUNT, …). Other rows are unaffected. |
+| A Provider update fails with a SAVE_ERROR about "Sync Individual Provider to Healthcare Provider" and `DUPLICATE_VALUE … CaqhIdentifier`, although the row changes something unrelated (e.g. the phone) | The org's flow, during the update | Another Provider has the same CAQH ID (a known, accepted risk; see section 6). Correct the CAQH ID on one of the two Providers, then re-run. |
 | File-level problem: not UTF-8, empty, malformed CSV, missing required column, more than 5,000 rows, file version deleted | `RosterIngestionBatch.start()` | The Run is **Failed** with the reason. No rows are processed. |
 | A slice throws, including on a governor limit | Salesforce | That slice is rolled back and the job moves on. `finish()` reports the missing rows (Completed with Errors, or Failed if every slice failed). Re-running the file is safe: rows already ingested come out UNCHANGED. |
 | The job dies where the batch can't record it (e.g. a governor limit in `start()`) | `RosterIngestionRunService.failAbandonedRuns` | The Run would stay Queued or Running. Whenever runs are listed, and before a new Run starts, any active Run whose batch job has ended (Completed, Failed or Aborted) is marked **Failed**, with the job's error. |

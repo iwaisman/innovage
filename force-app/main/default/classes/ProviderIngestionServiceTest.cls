@@ -16,7 +16,7 @@ private class ProviderIngestionServiceTest {
     private static Account reload(Id accountId) {
         return [
             SELECT Id, RecordTypeId, IsPersonAccount, FirstName, LastName, NPI__c, Phone, PersonEmail,
-                PersonBirthdate, PersonMailingStreet, PersonMailingState, InnovAge_Unique_ID__c
+                PersonBirthdate, PersonMailingStreet, PersonMailingState, InnovAge_Unique_ID__c, CAQH_ID__pc
             FROM Account
             WHERE Id = :accountId
         ];
@@ -52,6 +52,7 @@ private class ProviderIngestionServiceTest {
         Assert.areEqual('(303) 555-0142', inserted.Phone, 'Normalized phone');
         Assert.areEqual(Date.newInstance(1980, 4, 17), inserted.PersonBirthdate, 'DOB from the row');
         Assert.areEqual('100 Main St\nSuite 200', inserted.PersonMailingStreet, 'Joined mailing street');
+        Assert.areEqual('12345678', inserted.CAQH_ID__pc, 'CAQH ID from the row');
     }
 
     @IsTest
