@@ -1,0 +1,23 @@
+Topic,Rule,Details
+File format,UTF-8 CSV,Save from Excel as 'CSV UTF-8'. Other encodings fail the whole run. Standard CSV quoting (RFC 4180).
+File format,First row is the header,"Spreadsheet row numbers are used in Issues, with the header as row 1."
+File format,All seven columns are required in the header,"Provider Unique ID, Individual NPI, Facility Unique ID, Facility NPI, Facility Shipping Address, Relationship Start Date, Terminate. A missing column fails the whole run. Values may be blank. Column names must match exactly, including case and spacing."
+File format,Every row has the same number of columns as the header,A row with a different count is a row error (COLUMN_COUNT) and is skipped.
+Limits,"At most 5,000 data rows and 3 MB",Larger files fail the run before any row is processed.
+Before you start,Providers must already exist,This file never creates Providers or facilities. Ingest the personnel file first; rows for unknown Providers fail with UNKNOWN_PROVIDER and can be re-run later.
+Organization scope,A roster only changes relationships at its own Organization's facilities,"The scope is the roster's Organization and every Organization below it (sub-organizations, their sub-organizations, and so on), never its parents. A facility is in scope when its Healthcare Facility's Legal Owner is one of these. A facility with no Legal Owner is in no roster's scope."
+Matching,"The Provider is found by Provider Unique ID, or by Individual NPI","Same rules as the personnel file, except that no match is an error (UNKNOWN_PROVIDER)."
+Matching,"The facility is found by Facility Unique ID, then Facility NPI, then address",Only the first key given decides; the others must agree with it. NPI and address only search facilities in the roster's scope and must find exactly one. Not needed when Terminate = All.
+Active relationship,A relationship is active when Active is checked and it has no Termination Date,Provisional definition. Only active relationships are terminated or count as already existing.
+Actions,Terminate blank: create,"No active relationship: one is created (Active, with the start date if given) - Inserted. Already active: nothing changes - Unchanged. A Provider who left and returns gets a new relationship; the old one is kept as it is."
+Actions,Terminate = Single: end one relationship,"The active relationship is deactivated and its Termination Date set to the run date - Terminated. None active: nothing changes, warning NO_ACTIVE_RELATIONSHIP - Unchanged."
+Actions,Terminate = All: end all of the Provider's relationships in scope,Every active relationship of the Provider at a facility in the roster's scope is terminated - Terminated. Relationships at other Organizations' facilities are not touched. None active: warning NO_ACTIVE_RELATIONSHIP - Unchanged.
+Actions,Terminations use the run date,The Termination Date is the date the ingestion run started. No termination reason is set.
+Rows in the same file,Rows are applied in file order and never create duplicates,Two create rows for the same Provider and facility create one relationship (the second is Unchanged). A create followed by a terminate ends with the relationship terminated.
+Data anomalies,Several active relationships for one Provider and facility,Should not exist. A terminate ends all of them and a create creates nothing; either way the row gets warning MULTIPLE_ACTIVE_RELATIONSHIPS so the data can be investigated.
+Outcomes,"Every row ends as Inserted, Terminated, Unchanged or Error","Counts are rows, not relationships: a Terminate = All row that ends three relationships counts once. Errors and warnings are recorded as Issues on the Run, with row number, code, message, Provider and facility."
+Side effects,Creating or terminating a relationship runs the org's payer participation flows,Activating a relationship creates a Provider Plan Participation for the facility's payer network; deactivating the last one in a network ends it.
+Runs,"One run per roster at a time, across both files",A personnel run and a relationships run of the same roster cannot overlap; different rosters can. A run processes the file version that was current when it started.
+Runs,Re-running a file is safe,Relationships already created come out Unchanged; terminations already done come out Unchanged with a warning.
+Privacy,"Messages name Providers, facilities and Organizations",They never contain sensitive Provider values.
+Access,Who can run it,Users who can edit the roster can start and cancel runs. Seeing Runs and Issues needs the Roster_Ingestion_Files permission set. Records are matched and written regardless of the user's own access to them.
