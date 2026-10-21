@@ -71,6 +71,7 @@ row processor and the Run's context.
 |---|---|
 | `ProviderIngestionService` | Row logic. `ingestAll(rows)`: maps the rows, matches them against existing Providers, and performs the inserts and updates. `ingest(row)` is the single-row form. Its `Processor` adapts it to `RosterRowProcessor`. |
 | `ProviderCsvMapping` | Maps CSV headers to Account fields. Validates and normalizes values (phone, email, dates, SSN, NPI, state, ZIP, picklists, and multi-select picklists split on `MULTI_PICKLIST_SEPARATOR`, currently `;`) and defines each field's update policy (OVERWRITE, FILL_IF_BLANK, INSERT_ONLY). Invalid values are dropped as warnings. `parseDate` is shared with the relationships file. The full column list is in [docs/specs/personnel-file-mapping.csv](../specs/personnel-file-mapping.csv). |
+| `ProviderSpecialtyService` | `apply(requests)`: after the Provider saves, links each Provider to the NUCC specialties in its row (Primary / Secondary Provider Specialty) through HealthcareProviderTaxonomy records. Three queries and at most one update and one insert per slice. |
 | `ProviderMatcher` | `matchAll(requests)`: finds the existing Provider for each row by Unique ID and/or NPI, with **one** query for all rows. Used by both file types. |
 | `AccountMatchResult` | The outcome of matching one row: UNIQUE_MATCH, NO_MATCH, or an error outcome. |
 | `InnovAgeUniqueId` | Parses and validates an InnovAge Unique ID (prefix + 9-digit auto-number + 3-character Id suffix; `P` for Providers, `MF` for facilities). |
@@ -268,6 +269,44 @@ For a list of rows it:
 4. **Saves** with at most one partial-success `Database.insert` and one
    `Database.update`, in system mode. Each save result is mapped back to the row
    that produced it; a failed save becomes a SAVE_ERROR on that row.
+5. **Links specialties** with `ProviderSpecialtyService` (section 6.1) for every
+   row whose Provider was saved.
+
+### 6.1 Specialties
+
+The Primary and Secondary Provider Specialty columns link a Provider to records
+of Verifiable's NUCC taxonomy (`verifiable__VfiNUCCTaxonomy__c`). A link is a
+`HealthcareProviderTaxonomy` (HPT) between the Provider's HealthcareProvider and
+the taxonomy record (`NUCC_Taxonomy__c`, a lookup by record Id). The code is
+also stored in `Taxonomy_Code__c`.
+
+- **Reading:** a value is `<label>:<code>`. The code is the text after the
+  last `:` (`ProviderCsvMapping.SPECIALTY_CODE_SEPARATOR`). This format is
+  assumed until real files arrive.
+- **Primary:** links the specialty and marks it primary. A different previous
+  primary stays linked, unmarked; an existing secondary link is promoted rather
+  than duplicated.
+- **Secondary:** adds the link if missing. It never changes the primary flag.
+- **Never removed:** a specialty missing from a later file stays linked.
+- **New links:** `Name` = the taxonomy's name, `IsActive = true` (it defaults to
+  false), `AccountId` left blank.
+- **Codes that can't be used:** an unknown code, or one shared by several
+  taxonomy records (the code is not unique in the schema), is ignored with a
+  warning (UNKNOWN_SPECIALTY / AMBIGUOUS_SPECIALTY). A link that fails to save
+  is a warning (SPECIALTY_NOT_SAVED). The Provider is saved either way.
+- **Outcome:** a specialty change makes an otherwise unchanged existing
+  Provider UPDATED.
+- **Existing links are found by `Taxonomy_Code__c`, not by the lookup.** The
+  lookup is cleared (SetNull) if its taxonomy record is deleted, e.g. by a
+  delete-and-reload of the taxonomy. Finding links by code means the next
+  ingestion of that Provider refills the lookup instead of adding a second
+  link. Reloading the taxonomy by upsert on `verifiable__Vuid__c` avoids this
+  entirely.
+- **Rows in one slice** are applied in order against one map of links, so no
+  link is created twice; the last row's primary wins.
+
+Verifiable also has its own Provider specialty object,
+`verifiable__VfiProviderSpecialty__c`, which ingestion does not use.
 
 ### Duplicate rows
 

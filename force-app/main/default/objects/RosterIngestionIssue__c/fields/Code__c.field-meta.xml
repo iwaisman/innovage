@@ -149,6 +149,21 @@
                 <default>false</default>
                 <label>START_DATE_IGNORED</label>
             </value>
+            <value>
+                <fullName>UNKNOWN_SPECIALTY</fullName>
+                <default>false</default>
+                <label>UNKNOWN_SPECIALTY</label>
+            </value>
+            <value>
+                <fullName>AMBIGUOUS_SPECIALTY</fullName>
+                <default>false</default>
+                <label>AMBIGUOUS_SPECIALTY</label>
+            </value>
+            <value>
+                <fullName>SPECIALTY_NOT_SAVED</fullName>
+                <default>false</default>
+                <label>SPECIALTY_NOT_SAVED</label>
+            </value>
         </valueSetDefinition>
     </valueSet>
 </CustomField>

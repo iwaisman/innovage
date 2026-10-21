@@ -118,6 +118,18 @@ public with sharing class ProviderIngestionService {
             errorCode = code;
             errors.add(message);
         }
+
+        /* A specialty change makes an otherwise unchanged existing Provider UPDATED. */
+        private void addSpecialtyOutcome(ProviderSpecialtyService.Outcome specialties) {
+            for (ProviderCsvMapping.ValueWarning warning : specialties.warnings) {
+                warnings.add((warning.column == null ? '' : '"' + warning.column + '": ') + warning.message);
+                valueWarnings.add(warning);
+            }
+            changesByField.putAll(specialties.changesByLabel);
+            if (outcome == ProviderIngestionService.Outcome.UNCHANGED && !specialties.changesByLabel.isEmpty()) {
+                outcome = ProviderIngestionService.Outcome.UPDATED;
+            }
+        }
     }
 
     /**
@@ -171,7 +183,7 @@ public with sharing class ProviderIngestionService {
         }
 
         for (ProviderCsvMapping.ValueWarning warning : result.valueWarnings) {
-            row.warn(RosterIngestionRunService.CODE_INVALID_VALUE, warning.column, warning.message);
+            row.warn(warning.code ?? RosterIngestionRunService.CODE_INVALID_VALUE, warning.column, warning.message);
         }
 
         row.putIssueValue(RosterIngestionIssue__c.Provider__c, result.accountId);
@@ -233,7 +245,30 @@ public with sharing class ProviderIngestionService {
         }
 
         saves.execute();
+        applySpecialties(results, mappedRows);
         return results;
+    }
+
+    /*
+     * Links the saved Providers to the specialties in their rows (see
+     * ProviderSpecialtyService). Runs after the Provider saves, so new Providers
+     * already have their HealthcareProvider; rows that errored are skipped.
+     */
+    private static void applySpecialties(List<IngestResult> results, List<ProviderCsvMapping.MappedRow> mappedRows) {
+        List<ProviderSpecialtyService.Request> requests = new List<ProviderSpecialtyService.Request>();
+        for (Integer i = 0; i < results.size(); i++) {
+            IngestResult result = results[i];
+            requests.add(new ProviderSpecialtyService.Request(
+                result.outcome == Outcome.ERROR ? null : result.accountId,
+                mappedRows[i].primarySpecialtyCode,
+                mappedRows[i].secondarySpecialtyCode
+            ));
+        }
+
+        List<ProviderSpecialtyService.Outcome> outcomes = ProviderSpecialtyService.apply(requests);
+        for (Integer i = 0; i < results.size(); i++) {
+            results[i].addSpecialtyOutcome(outcomes[i]);
+        }
     }
 
     /*

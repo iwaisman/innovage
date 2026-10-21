@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>NUCC_Taxonomy__c</fullName>
+    <deleteConstraint>SetNull</deleteConstraint>
+    <description>The NUCC specialty (Verifiable's NUCC taxonomy) this Provider specialty links to; set by personnel ingestion (Primary / Secondary Provider Specialty). Linked by record Id because the taxonomy code is not guaranteed unique. Cleared if the taxonomy record is deleted: Taxonomy_Code__c keeps the code, and ingestion refills this field from it.</description>
+    <inlineHelpText>The specialty in the NUCC taxonomy. Taxonomy Code holds its code.</inlineHelpText>
+    <label>NUCC Taxonomy</label>
+    <referenceTo>verifiable__VfiNUCCTaxonomy__c</referenceTo>
+    <relationshipLabel>Healthcare Provider Taxonomies</relationshipLabel>
+    <relationshipName>Healthcare_Provider_Taxonomies</relationshipName>
+    <required>false</required>
+    <type>Lookup</type>
+</CustomField>

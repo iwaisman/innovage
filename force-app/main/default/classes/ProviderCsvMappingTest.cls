@@ -118,6 +118,37 @@ private class ProviderCsvMappingTest {
         Test.stopTest();
     }
 
+    @IsTest
+    static void shouldReadSpecialtyCodes() {
+        Test.startTest();
+        String labelled = ProviderCsvMapping.specialtyCode('Family Medicine Physician:207Q00000X');
+        String colonsInLabel = ProviderCsvMapping.specialtyCode('Label: with: colons : 207R00000X ');
+        String bare = ProviderCsvMapping.specialtyCode(' 207Q00000X ');
+        String labelOnly = ProviderCsvMapping.specialtyCode('Cardiology:');
+        String blank = ProviderCsvMapping.specialtyCode('  ');
+        Test.stopTest();
+
+        Assert.areEqual('207Q00000X', labelled, 'Code after the separator');
+        Assert.areEqual('207R00000X', colonsInLabel, 'Code after the last separator, trimmed');
+        Assert.areEqual('207Q00000X', bare, 'A bare code is the code');
+        Assert.areEqual('', labelOnly, 'A label without a code is empty, not blank');
+        Assert.isNull(blank, 'Blank is null');
+    }
+
+    @IsTest
+    static void shouldDropSecondarySpecialty_WhenSameAsPrimary() {
+        Map<String, String> row = ProviderTestDataFactory.createValidRow();
+        row.put(ProviderCsvMapping.PRIMARY_SPECIALTY_HEADER, 'A:207Q00000X');
+        row.put(ProviderCsvMapping.SECONDARY_SPECIALTY_HEADER, 'B:207Q00000X');
+
+        Test.startTest();
+        ProviderCsvMapping.MappedRow mapped = ProviderCsvMapping.mapRow(row);
+        Test.stopTest();
+
+        Assert.areEqual('207Q00000X', mapped.primarySpecialtyCode, 'Primary read');
+        Assert.isNull(mapped.secondarySpecialtyCode, 'Same as primary: only the primary counts');
+    }
+
     // ─── Invalid values are dropped with a warning ─────────────────────
 
     @IsTest

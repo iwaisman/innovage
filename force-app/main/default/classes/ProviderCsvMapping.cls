@@ -18,6 +18,17 @@ public inherited sharing class ProviderCsvMapping {
     public static final String UNIQUE_ID_HEADER = 'Provider Unique ID';
     public static final String NPI_HEADER = 'Individual NPI';
 
+    /* Specialty columns: not Account fields; ProviderSpecialtyService links them (see specialtyCode). */
+    public static final String PRIMARY_SPECIALTY_HEADER = 'Primary Provider Specialty';
+    public static final String SECONDARY_SPECIALTY_HEADER = 'Secondary Provider Specialty';
+
+    /*
+     * A specialty value is "<label><separator><NUCC taxonomy code>", e.g.
+     * "Family Medicine Physician:207Q00000X"; only the code is used. Assumed format
+     * (2026-10-20) until real files arrive; change it here (and in specialtyCode).
+     */
+    public static final String SPECIALTY_CODE_SEPARATOR = ':';
+
     /*
      * Separates the values of a multi-select picklist column in the CSV, e.g.
      * "Polish;Spanish". Agreed as ";" for now (2026-10-19); change it here if the
@@ -68,8 +79,15 @@ public inherited sharing class ProviderCsvMapping {
         /** The CSV header(s) the value came from, e.g. "Provider Email" or "Line 1 / Line 2". */
         public String column { get; private set; }
         public String message { get; private set; }
+        /** The Issue code; null means INVALID_VALUE. */
+        public String code { get; private set; }
 
         public ValueWarning(String column, String message) {
+            this(null, column, message);
+        }
+
+        public ValueWarning(String code, String column, String message) {
+            this.code = code;
             this.column = column;
             this.message = message;
         }
@@ -82,6 +100,13 @@ public inherited sharing class ProviderCsvMapping {
         /** Raw key values, passed to ProviderMatcher, which reports malformed keys itself. */
         public String uniqueId { get; private set; }
         public String npi { get; private set; }
+
+        /**
+         * The NUCC taxonomy codes from the specialty columns (see specialtyCode), or
+         * null when blank. A secondary equal to the primary is null.
+         */
+        public String primarySpecialtyCode { get; private set; }
+        public String secondarySpecialtyCode { get; private set; }
 
         /** Valid, normalized, non-blank values. */
         public Map<Schema.SObjectField, Object> valuesByField { get; private set; }
@@ -202,6 +227,9 @@ public inherited sharing class ProviderCsvMapping {
         MappedRow mapped = new MappedRow();
         mapped.uniqueId = row.get(UNIQUE_ID_HEADER)?.trim();
         mapped.npi = row.get(NPI_HEADER)?.trim();
+        mapped.primarySpecialtyCode = specialtyCode(row.get(PRIMARY_SPECIALTY_HEADER));
+        String secondary = specialtyCode(row.get(SECONDARY_SPECIALTY_HEADER));
+        mapped.secondarySpecialtyCode = secondary == mapped.primarySpecialtyCode ? null : secondary;
 
         for (FieldMapping mapping : MAPPINGS) {
             String rawValue = joinedValue(row, mapping.headers);
@@ -225,6 +253,25 @@ public inherited sharing class ProviderCsvMapping {
         }
 
         return mapped;
+    }
+
+    /**
+     * The NUCC taxonomy code in a specialty value: the text after the last
+     * SPECIALTY_CODE_SEPARATOR, or the whole value when there is none. Taking the
+     * last one lets the label contain the separator.
+     *
+     * @param value A specialty column value, e.g. "Family Medicine Physician:207Q00000X"
+     * @return The code, trimmed (e.g. "207Q00000X"); null when the value is blank;
+     *         '' when the value has a label but no code (e.g. "Cardiology:")
+     */
+    public static String specialtyCode(String value) {
+        if (String.isBlank(value)) {
+            return null;
+        }
+        // substringAfterLast returns '' when the separator is missing, so a bare code is handled here.
+        return value.contains(SPECIALTY_CODE_SEPARATOR)
+            ? value.substringAfterLast(SPECIALTY_CODE_SEPARATOR).trim()
+            : value.trim();
     }
 
     /**

@@ -8,7 +8,9 @@ valid Luhn check digit so they pass format validation.
 
 Gender, pronouns and languages use values the org's picklists accept (see
 docs/specs/personnel-file-mapping.csv); secondary languages are separated by
-";" (ProviderCsvMapping.MULTI_PICKLIST_SEPARATOR).
+";" (ProviderCsvMapping.MULTI_PICKLIST_SEPARATOR). Specialties are written as
+"<label>:<NUCC taxonomy code>" with codes that exist in the sandbox's
+verifiable__VfiNUCCTaxonomy__c table (ProviderCsvMapping.SPECIALTY_CODE_SEPARATOR).
 
 Provider Unique ID is left blank: ingestion requires a supplied Unique ID to
 identify an existing Provider, so generated rows describe new Providers and are
@@ -63,7 +65,7 @@ HEADERS = [
     "Provider Billing State",
     "Provider Billing Zip",
     "Primary Provider Specialty",
-    "Additional Provider Specialty",
+    "Secondary Provider Specialty",
     "CAQH ID",
     "Initial Credentialing Date",
     "Last Credentialing Date",
@@ -105,11 +107,30 @@ LANGUAGES = [
 ]
 # Separates secondary languages; must match ProviderCsvMapping.MULTI_PICKLIST_SEPARATOR.
 LANGUAGE_SEPARATOR = ";"
+# (label, NUCC taxonomy code); every code exists in the innovage sandbox's NUCC taxonomy.
 SPECIALTIES = [
-    "Internal Medicine", "Family Medicine", "Geriatric Medicine", "Cardiology",
-    "Psychiatry", "Podiatry", "Physical Therapy", "Occupational Therapy",
-    "Social Work", "Nursing", "Endocrinology", "Neurology",
+    ("Internal Medicine Physician", "207R00000X"),
+    ("Family Medicine Physician", "207Q00000X"),
+    ("Geriatric Medicine (Family Medicine) Physician", "207QG0300X"),
+    ("Cardiovascular Disease Physician", "207RC0000X"),
+    ("Psychiatry Physician", "2084P0800X"),
+    ("Podiatrist", "213E00000X"),
+    ("Physical Therapist", "225100000X"),
+    ("Occupational Therapist", "225X00000X"),
+    ("Clinical Social Worker", "1041C0700X"),
+    ("Registered Nurse", "163W00000X"),
+    ("Endocrinology, Diabetes & Metabolism Physician", "207RE0101X"),
+    ("Neurology Physician", "2084N0400X"),
+    ("Family Nurse Practitioner", "363LF0000X"),
+    ("Physician Assistant", "363A00000X"),
 ]
+# Separates a specialty's label from its code; must match ProviderCsvMapping.SPECIALTY_CODE_SEPARATOR.
+SPECIALTY_SEPARATOR = ":"
+
+
+def specialty_value(specialty) -> str:
+    label, code = specialty
+    return f"{label}{SPECIALTY_SEPARATOR}{code}"
 STREETS = [
     "Elm Street", "Colfax Avenue", "Broadway", "Main Street", "Pine Street",
     "Federal Boulevard", "Cherry Creek Drive", "Wadsworth Boulevard",
@@ -193,8 +214,8 @@ def generate_row(index: int, existing: tuple = None) -> dict:
     primary_language = random.choice(LANGUAGES[:3]) if random.random() < 0.9 else random.choice(LANGUAGES)
     secondary = random.sample([l for l in LANGUAGES if l != primary_language], k=random.randint(0, 2))
     primary_specialty = random.choice(SPECIALTIES)
-    additional_specialty = random.choice(
-        [""] + [s for s in SPECIALTIES if s != primary_specialty]
+    secondary_specialty = random.choice(
+        [None, None] + [s for s in SPECIALTIES if s != primary_specialty]
     )
 
     mailing = generate_address()
@@ -233,8 +254,8 @@ def generate_row(index: int, existing: tuple = None) -> dict:
         "Provider Billing City": billing["city"],
         "Provider Billing State": billing["state"],
         "Provider Billing Zip": billing["zip"],
-        "Primary Provider Specialty": primary_specialty,
-        "Additional Provider Specialty": additional_specialty,
+        "Primary Provider Specialty": specialty_value(primary_specialty),
+        "Secondary Provider Specialty": specialty_value(secondary_specialty) if secondary_specialty else "",
         "CAQH ID": f"{random.randint(10000000, 19999999)}",
         "Initial Credentialing Date": fmt(initial_cred),
         "Last Credentialing Date": fmt(last_cred),
@@ -336,10 +357,19 @@ def _bad_secondary_languages(row):
     return "Secondary Provider Language(s) with an unknown language or the wrong separator"
 
 
+def _bad_specialty(row):
+    row["Primary Provider Specialty"] = random.choice([
+        f"Made-up Specialty{SPECIALTY_SEPARATOR}999999999X",  # unknown code
+        "Cardiology",  # no code: read as the code "Cardiology", which is unknown
+        f"Cardiology{SPECIALTY_SEPARATOR}",  # label but no code
+    ])
+    return "Primary Provider Specialty with an unknown or missing NUCC code"
+
+
 ERROR_INJECTORS = [
     _bad_npi, _short_npi, _bad_dob, _future_dob, _missing_required, _bad_ssn,
     _bad_state, _bad_zip, _bad_email, _bad_line_type, _cred_order, _bad_unique_id,
-    _bad_gender, _bad_pronouns, _bad_language, _bad_secondary_languages,
+    _bad_gender, _bad_pronouns, _bad_language, _bad_secondary_languages, _bad_specialty,
 ]
 
 
