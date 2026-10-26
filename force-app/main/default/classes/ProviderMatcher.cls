@@ -9,7 +9,7 @@
  *       A matched Provider with a blank NPI is not a mismatch; the caller may
  *       fill the NPI in.
  *
- * Runs without sharing and queries in system mode: ingestion has to see every
+ * Runs without sharing and queries in system mode: intake has to see every
  * Provider regardless of who uploaded the roster, otherwise it would insert
  * duplicates of records the uploader cannot see.
  */

@@ -1,5 +1,5 @@
 /**
- * Test data for the relationship ingestion tests: Organizations, facilities
+ * Test data for the relationship intake tests: Organizations, facilities
  * (Participant_Facility Accounts with a HealthcareFacility and Legal Owner),
  * Providers with a HealthcareProvider, and relationships.
  *
@@ -162,23 +162,23 @@ public class RelationshipTestDataFactory {
     /**
      * Uploads a relationships file (or a new version of the existing one) for the roster.
      *
-     * @param roster The roster; its Relationships_File__c is set on the first upload
+     * @param roster The roster; its Relationships_File_ID__c is set on the first upload
      * @param body The file content
      * @return The new ContentVersion
      */
-    public static ContentVersion uploadRelationshipsFile(RosterIngestion__c roster, Blob body) {
-        RosterIngestion__c current = [SELECT Id, Relationships_File__c FROM RosterIngestion__c WHERE Id = :roster.Id];
+    public static ContentVersion uploadRelationshipsFile(Roster_Intake__c roster, Blob body) {
+        Roster_Intake__c current = [SELECT Id, Relationships_File_ID__c FROM Roster_Intake__c WHERE Id = :roster.Id];
         ContentVersion version = new ContentVersion(Title = 'relationships', PathOnClient = 'relationships.csv', VersionData = body);
-        if (current.Relationships_File__c == null) {
+        if (current.Relationships_File_ID__c == null) {
             version.FirstPublishLocationId = roster.Id;
         } else {
-            version.ContentDocumentId = current.Relationships_File__c;
+            version.ContentDocumentId = current.Relationships_File_ID__c;
         }
         insert version;
 
         version = [SELECT Id, ContentDocumentId, VersionNumber FROM ContentVersion WHERE Id = :version.Id];
-        if (current.Relationships_File__c == null) {
-            current.Relationships_File__c = version.ContentDocumentId;
+        if (current.Relationships_File_ID__c == null) {
+            current.Relationships_File_ID__c = version.ContentDocumentId;
             update current;
         }
         return version;

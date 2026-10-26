@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Roster_Intake__c</fullName>
+    <description>The roster whose file this run processed. Only one run per roster may be Queued or Running at a time, whatever its file type (RosterIntakeRunService). Master-detail: deleting the roster deletes its runs, and the roster's run counts and last-run dates are roll-ups of this relationship.</description>
+    <label>Roster Intake</label>
+    <reparentableMasterDetail>false</reparentableMasterDetail>
+    <referenceTo>Roster_Intake__c</referenceTo>
+    <relationshipLabel>Roster Intake Runs</relationshipLabel>
+    <relationshipName>Runs</relationshipName>
+    <relationshipOrder>0</relationshipOrder>
+    <type>MasterDetail</type>
+    <writeRequiresMasterRead>false</writeRequiresMasterRead>
+</CustomField>

@@ -1,5 +1,5 @@
 /**
- * Test data for the Provider ingestion tests.
+ * Test data for the Provider intake tests.
  */
 @IsTest
 public class ProviderTestDataFactory {
@@ -143,20 +143,20 @@ public class ProviderTestDataFactory {
     }
 
     /**
-     * Creates a user with the Roster_Ingestion_Files permission set. Classes at
+     * Creates a user with the Roster_Intake_Files permission set. Classes at
      * API 67.0 query in user mode by default, and users get access to the Run and
      * Issue fields only through this permission set; it takes effect inside
      * System.runAs.
      *
-     * @param lastName Distinguishes the user; look it up again with ingestionUser()
+     * @param lastName Distinguishes the user; look it up again with intakeUser()
      * @return The new user
      */
-    public static User createIngestionUser(String lastName) {
+    public static User createIntakeUser(String lastName) {
         User user = new User(
             ProfileId = UserInfo.getProfileId(),
             LastName = lastName,
             Username = lastName.toLowerCase() + '.' + Datetime.now().getTime() + '@test.invalid',
-            Email = 'roster.ingestion@test.invalid',
+            Email = 'roster.intake@test.invalid',
             Alias = 'ringest',
             TimeZoneSidKey = 'America/Denver',
             LocaleSidKey = 'en_US',
@@ -168,22 +168,22 @@ public class ProviderTestDataFactory {
             insert user;
             insert new PermissionSetAssignment(
                 AssigneeId = user.Id,
-                PermissionSetId = [SELECT Id FROM PermissionSet WHERE Name = 'Roster_Ingestion_Files'].Id
+                PermissionSetId = [SELECT Id FROM PermissionSet WHERE Name = 'Roster_Intake_Files'].Id
             );
         }
         return user;
     }
 
     /**
-     * @param lastName The last name passed to createIngestionUser
+     * @param lastName The last name passed to createIntakeUser
      * @return That user
      */
-    public static User ingestionUser(String lastName) {
+    public static User intakeUser(String lastName) {
         return [SELECT Id FROM User WHERE LastName = :lastName LIMIT 1];
     }
 
     /**
-     * @return An Organization account, which RosterIngestion__c.Organization__c requires
+     * @return An Organization account, which Roster_Intake__c.Organization__c requires
      */
     public static Account createOrganization() {
         Account organization = new Account(
@@ -198,38 +198,38 @@ public class ProviderTestDataFactory {
 
     /**
      * @param organizationId An Organization account (see createOrganization)
-     * @return A new RosterIngestion__c
+     * @return A new Roster_Intake__c
      */
-    public static RosterIngestion__c createRoster(Id organizationId) {
-        RosterIngestion__c roster = new RosterIngestion__c(Organization__c = organizationId);
+    public static Roster_Intake__c createRoster(Id organizationId) {
+        Roster_Intake__c roster = new Roster_Intake__c(Organization__c = organizationId);
         insert roster;
         return roster;
     }
 
     /**
-     * Uploads a personnel file (or a new version of the existing one) for the roster.
+     * Uploads a provider file (or a new version of the existing one) for the roster.
      *
-     * @param roster The roster; its Personnel_File__c is set on the first upload
+     * @param roster The roster; its Provider_File_ID__c is set on the first upload
      * @param body The file content
      * @return The new ContentVersion
      */
-    public static ContentVersion uploadPersonnelFile(RosterIngestion__c roster, Blob body) {
-        RosterIngestion__c current = [SELECT Id, Personnel_File__c FROM RosterIngestion__c WHERE Id = :roster.Id];
+    public static ContentVersion uploadProviderFile(Roster_Intake__c roster, Blob body) {
+        Roster_Intake__c current = [SELECT Id, Provider_File_ID__c FROM Roster_Intake__c WHERE Id = :roster.Id];
         ContentVersion version = new ContentVersion(
-            Title = 'personnel',
-            PathOnClient = 'personnel.csv',
+            Title = 'provider',
+            PathOnClient = 'provider.csv',
             VersionData = body
         );
-        if (current.Personnel_File__c == null) {
+        if (current.Provider_File_ID__c == null) {
             version.FirstPublishLocationId = roster.Id;
         } else {
-            version.ContentDocumentId = current.Personnel_File__c;
+            version.ContentDocumentId = current.Provider_File_ID__c;
         }
         insert version;
 
         version = [SELECT Id, ContentDocumentId, VersionNumber FROM ContentVersion WHERE Id = :version.Id];
-        if (current.Personnel_File__c == null) {
-            current.Personnel_File__c = version.ContentDocumentId;
+        if (current.Provider_File_ID__c == null) {
+            current.Provider_File_ID__c = version.ContentDocumentId;
             update current;
         }
         return version;

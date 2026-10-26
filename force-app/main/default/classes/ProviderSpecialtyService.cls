@@ -21,11 +21,11 @@
  * Rows are applied in order against one map of the slice's links, so two rows
  * for one Provider never create the same link twice; the last row's primary wins.
  *
- * Queries and DML run in system mode, like the rest of Provider ingestion.
+ * Queries and DML run in system mode, like the rest of Provider intake.
  */
 public with sharing class ProviderSpecialtyService {
 
-    /* Warning codes; these are RosterIngestionIssue__c.Code__c values. */
+    /* Warning codes; these are Roster_Intake_Issue__c.Code__c values. */
     public static final String UNKNOWN_SPECIALTY = 'UNKNOWN_SPECIALTY';
     public static final String AMBIGUOUS_SPECIALTY = 'AMBIGUOUS_SPECIALTY';
     public static final String SPECIALTY_NOT_SAVED = 'SPECIALTY_NOT_SAVED';
@@ -65,11 +65,11 @@ public with sharing class ProviderSpecialtyService {
     public class Outcome {
         public List<ProviderCsvMapping.ValueWarning> warnings { get; private set; }
         /** PRIMARY_SPECIALTY / SECONDARY_SPECIALTY => old and new code. */
-        public Map<String, ProviderIngestionService.FieldChange> changesByLabel { get; private set; }
+        public Map<String, ProviderIntakeService.FieldChange> changesByLabel { get; private set; }
 
         private Outcome() {
             warnings = new List<ProviderCsvMapping.ValueWarning>();
-            changesByLabel = new Map<String, ProviderIngestionService.FieldChange>();
+            changesByLabel = new Map<String, ProviderIntakeService.FieldChange>();
         }
 
         private void warn(String code, String column, String message) {
@@ -316,7 +316,7 @@ public with sharing class ProviderSpecialtyService {
             target.dependOn(outcome, PRIMARY_SPECIALTY);
             outcome.changesByLabel.put(
                 PRIMARY_SPECIALTY,
-                new ProviderIngestionService.FieldChange(previousCode, taxonomy.verifiable__TaxonomyCode__c)
+                new ProviderIntakeService.FieldChange(previousCode, taxonomy.verifiable__TaxonomyCode__c)
             );
         }
 
@@ -329,7 +329,7 @@ public with sharing class ProviderSpecialtyService {
             newLink(healthcareProviderId, taxonomy, false).dependOn(outcome, SECONDARY_SPECIALTY);
             outcome.changesByLabel.put(
                 SECONDARY_SPECIALTY,
-                new ProviderIngestionService.FieldChange(null, taxonomy.verifiable__TaxonomyCode__c)
+                new ProviderIntakeService.FieldChange(null, taxonomy.verifiable__TaxonomyCode__c)
             );
         }
 

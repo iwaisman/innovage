@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Roster_Intake_Run__c</fullName>
+    <description>The run that found this issue. Master-detail: the issues are listed (by severity, sorted by Row Number) on the run's page and deleted with the run.</description>
+    <label>Roster Intake Run</label>
+    <reparentableMasterDetail>false</reparentableMasterDetail>
+    <referenceTo>Roster_Intake_Run__c</referenceTo>
+    <relationshipLabel>Roster Intake Issues</relationshipLabel>
+    <relationshipName>Issues</relationshipName>
+    <relationshipOrder>0</relationshipOrder>
+    <type>MasterDetail</type>
+    <writeRequiresMasterRead>false</writeRequiresMasterRead>
+</CustomField>

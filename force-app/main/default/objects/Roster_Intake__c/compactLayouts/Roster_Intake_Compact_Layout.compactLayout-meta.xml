@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CompactLayout xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Roster_Intake_Compact_Layout</fullName>
+    <fields>Name</fields>
+    <fields>Organization__c</fields>
+    <fields>Provider_Runs__c</fields>
+    <fields>Last_Provider_Run__c</fields>
+    <fields>Relationship_Runs__c</fields>
+    <fields>Last_Relationship_Run__c</fields>
+    <label>RosterIntake Compact Layout</label>
+</CompactLayout>

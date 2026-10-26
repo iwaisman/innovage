@@ -4,7 +4,7 @@
  * and so on). Organizations above it are never included.
  *
  * A facility belongs to the scope when its HealthcareFacility's Legal Owner is
- * one of these Organizations. Relationship ingestion only changes
+ * one of these Organizations. Relationship intake only changes
  * relationships at facilities in the scope.
  *
  * Runs without sharing and queries in system mode: the scope must not depend on

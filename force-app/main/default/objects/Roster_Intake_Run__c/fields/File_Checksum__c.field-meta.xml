@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>File_Checksum__c</fullName>
+    <description>MD5 checksum of the processed file version (ContentVersion.Checksum). Recorded for traceability, e.g. to tell whether two runs processed identical content; not read by the intake logic.</description>
+    <label>File Checksum</label>
+    <length>50</length>
+    <required>false</required>
+    <type>Text</type>
+    <unique>false</unique>
+    <externalId>false</externalId>
+</CustomField>

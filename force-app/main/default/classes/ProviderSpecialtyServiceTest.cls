@@ -64,7 +64,7 @@ private class ProviderSpecialtyServiceTest {
         );
     }
 
-    private static Boolean hasWarning(ProviderIngestionService.IngestResult result, String code) {
+    private static Boolean hasWarning(ProviderIntakeService.IngestResult result, String code) {
         for (ProviderCsvMapping.ValueWarning warning : result.valueWarnings) {
             if (warning.code == code) {
                 return true;
@@ -83,10 +83,10 @@ private class ProviderSpecialtyServiceTest {
         newRow.put(ProviderCsvMapping.SECONDARY_SPECIALTY_HEADER, 'Internal Medicine Physician:' + INTERNAL);
 
         Test.startTest();
-        ProviderIngestionService.IngestResult result = ProviderIngestionService.ingest(newRow);
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(newRow);
         Test.stopTest();
 
-        Assert.areEqual(ProviderIngestionService.Outcome.INSERTED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(ProviderIntakeService.Outcome.INSERTED, result.outcome, 'Errors: ' + result.errors);
         Id healthcareProviderId = [SELECT Healthcare_Provider__c FROM Account WHERE Id = :result.accountId].Healthcare_Provider__c;
         Map<String, HealthcareProviderTaxonomy> byCode = links(healthcareProviderId);
         Assert.areEqual(new Set<String>{ FAMILY, INTERNAL }, byCode.keySet(), 'Both specialties linked');
@@ -105,10 +105,10 @@ private class ProviderSpecialtyServiceTest {
     @IsTest
     static void shouldLinkPrimaryAndReportUpdate_WhenExistingProviderHasNone() {
         Test.startTest();
-        ProviderIngestionService.IngestResult result = ProviderIngestionService.ingest(row('Family:' + FAMILY, ''));
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row('Family:' + FAMILY, ''));
         Test.stopTest();
 
-        Assert.areEqual(ProviderIngestionService.Outcome.UPDATED, result.outcome, 'A specialty change is an update');
+        Assert.areEqual(ProviderIntakeService.Outcome.UPDATED, result.outcome, 'A specialty change is an update');
         Assert.isTrue(result.changesByField.containsKey(ProviderSpecialtyService.PRIMARY_SPECIALTY), 'Reported as a change');
         Assert.isTrue(links(existing().Healthcare_Provider__c).get(FAMILY).IsPrimaryTaxonomy, 'Linked as primary');
     }
@@ -118,10 +118,10 @@ private class ProviderSpecialtyServiceTest {
         link(FAMILY, true);
 
         Test.startTest();
-        ProviderIngestionService.IngestResult result = ProviderIngestionService.ingest(row('Family:' + FAMILY, ''));
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row('Family:' + FAMILY, ''));
         Test.stopTest();
 
-        Assert.areEqual(ProviderIngestionService.Outcome.UNCHANGED, result.outcome, 'Changes: ' + result.changesByField);
+        Assert.areEqual(ProviderIntakeService.Outcome.UNCHANGED, result.outcome, 'Changes: ' + result.changesByField);
         Assert.areEqual(1, links(existing().Healthcare_Provider__c).size(), 'No duplicate link');
     }
 
@@ -130,10 +130,10 @@ private class ProviderSpecialtyServiceTest {
         link(FAMILY, true);
 
         Test.startTest();
-        ProviderIngestionService.IngestResult result = ProviderIngestionService.ingest(row('Internal:' + INTERNAL, ''));
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row('Internal:' + INTERNAL, ''));
         Test.stopTest();
 
-        Assert.areEqual(ProviderIngestionService.Outcome.UPDATED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(ProviderIntakeService.Outcome.UPDATED, result.outcome, 'Errors: ' + result.errors);
         Assert.areEqual(FAMILY, result.changesByField.get(ProviderSpecialtyService.PRIMARY_SPECIALTY).oldValue, 'Reports the previous primary');
         Map<String, HealthcareProviderTaxonomy> byCode = links(existing().Healthcare_Provider__c);
         Assert.isFalse(byCode.get(FAMILY).IsPrimaryTaxonomy, 'Old primary stays linked, unmarked');
@@ -146,7 +146,7 @@ private class ProviderSpecialtyServiceTest {
         link(INTERNAL, false);
 
         Test.startTest();
-        ProviderIngestionService.ingest(row(INTERNAL, ''));
+        ProviderIntakeService.ingest(row(INTERNAL, ''));
         Test.stopTest();
 
         Map<String, HealthcareProviderTaxonomy> byCode = links(existing().Healthcare_Provider__c);
@@ -160,10 +160,10 @@ private class ProviderSpecialtyServiceTest {
         link(FAMILY, true);
 
         Test.startTest();
-        ProviderIngestionService.IngestResult result = ProviderIngestionService.ingest(row('', 'Geriatric:' + GERIATRIC));
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row('', 'Geriatric:' + GERIATRIC));
         Test.stopTest();
 
-        Assert.areEqual(ProviderIngestionService.Outcome.UPDATED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(ProviderIntakeService.Outcome.UPDATED, result.outcome, 'Errors: ' + result.errors);
         Map<String, HealthcareProviderTaxonomy> byCode = links(existing().Healthcare_Provider__c);
         Assert.isTrue(byCode.get(FAMILY).IsPrimaryTaxonomy, 'Primary untouched');
         Assert.isFalse(byCode.get(GERIATRIC).IsPrimaryTaxonomy, 'Secondary added, not primary');
@@ -174,17 +174,17 @@ private class ProviderSpecialtyServiceTest {
         link(FAMILY, true);
 
         Test.startTest();
-        ProviderIngestionService.IngestResult result = ProviderIngestionService.ingest(row('', FAMILY));
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row('', FAMILY));
         Test.stopTest();
 
-        Assert.areEqual(ProviderIngestionService.Outcome.UNCHANGED, result.outcome, 'Changes: ' + result.changesByField);
+        Assert.areEqual(ProviderIntakeService.Outcome.UNCHANGED, result.outcome, 'Changes: ' + result.changesByField);
         Assert.isTrue(links(existing().Healthcare_Provider__c).get(FAMILY).IsPrimaryTaxonomy, 'Still primary');
     }
 
     @IsTest
     static void shouldLinkOnce_WhenSecondaryEqualsPrimary() {
         Test.startTest();
-        ProviderIngestionService.ingest(row('A:' + FAMILY, 'B:' + FAMILY));
+        ProviderIntakeService.ingest(row('A:' + FAMILY, 'B:' + FAMILY));
         Test.stopTest();
 
         Map<String, HealthcareProviderTaxonomy> byCode = links(existing().Healthcare_Provider__c);
@@ -199,13 +199,13 @@ private class ProviderSpecialtyServiceTest {
         update new HealthcareProviderTaxonomy(Id = orphan.Id, NUCC_Taxonomy__c = null); // as SetNull leaves it
 
         Test.startTest();
-        ProviderIngestionService.IngestResult result = ProviderIngestionService.ingest(row(FAMILY, ''));
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row(FAMILY, ''));
         Test.stopTest();
 
         Map<String, HealthcareProviderTaxonomy> byCode = links(existing().Healthcare_Provider__c);
         Assert.areEqual(1, byCode.size(), 'Found by code: no second link');
         Assert.areEqual(taxonomyId(FAMILY), byCode.get(FAMILY).NUCC_Taxonomy__c, 'Lookup refilled');
-        Assert.areEqual(ProviderIngestionService.Outcome.UNCHANGED, result.outcome, 'A repair is not a reported change');
+        Assert.areEqual(ProviderIntakeService.Outcome.UNCHANGED, result.outcome, 'A repair is not a reported change');
     }
 
     // ─── Values that cannot be used ────────────────────────────────────
@@ -216,10 +216,10 @@ private class ProviderSpecialtyServiceTest {
         unknown.put('Provider Phone', '720-555-0177');
 
         Test.startTest();
-        ProviderIngestionService.IngestResult result = ProviderIngestionService.ingest(unknown);
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(unknown);
         Test.stopTest();
 
-        Assert.areEqual(ProviderIngestionService.Outcome.UPDATED, result.outcome, 'The rest of the row is ingested');
+        Assert.areEqual(ProviderIntakeService.Outcome.UPDATED, result.outcome, 'The rest of the row is ingested');
         Assert.isTrue(hasWarning(result, ProviderSpecialtyService.UNKNOWN_SPECIALTY), 'Warns: ' + result.warnings);
         Assert.isTrue(links(existing().Healthcare_Provider__c).isEmpty(), 'Nothing linked');
     }
@@ -227,7 +227,7 @@ private class ProviderSpecialtyServiceTest {
     @IsTest
     static void shouldWarn_WhenValueHasNoCode() {
         Test.startTest();
-        ProviderIngestionService.IngestResult result = ProviderIngestionService.ingest(row('Cardiology:', ''));
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row('Cardiology:', ''));
         Test.stopTest();
 
         Assert.isTrue(hasWarning(result, ProviderSpecialtyService.UNKNOWN_SPECIALTY), 'Warns: ' + result.warnings);
@@ -236,7 +236,7 @@ private class ProviderSpecialtyServiceTest {
     @IsTest
     static void shouldWarn_WhenCodeAmbiguous() {
         Test.startTest();
-        ProviderIngestionService.IngestResult result = ProviderIngestionService.ingest(row('Student:' + DUPLICATED, ''));
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row('Student:' + DUPLICATED, ''));
         Test.stopTest();
 
         Assert.isTrue(hasWarning(result, ProviderSpecialtyService.AMBIGUOUS_SPECIALTY), 'Warns: ' + result.warnings);
@@ -245,12 +245,12 @@ private class ProviderSpecialtyServiceTest {
 
     @IsTest
     static void shouldCarryWarningCodeIntoBatchResult() {
-        ProviderIngestionService.Processor processor = new ProviderIngestionService.Processor();
+        ProviderIntakeService.Processor processor = new ProviderIntakeService.Processor();
 
         Test.startTest();
-        RosterIngestionRow.Result result = processor.ingestAll(
-            new List<RosterIngestionRow.Input>{ new RosterIngestionRow.Input(2, row('X:999999999X', '')) },
-            new RosterIngestionRow.Context()
+        RosterIntakeRow.Result result = processor.ingestAll(
+            new List<RosterIntakeRow.Input>{ new RosterIntakeRow.Input(2, row('X:999999999X', '')) },
+            new RosterIntakeRow.Context()
         )[0];
         Test.stopTest();
 
@@ -263,9 +263,9 @@ private class ProviderSpecialtyServiceTest {
     @IsTest
     static void shouldApplyRowsInOrder_WhenSameProviderTwiceInSlice() {
         Test.startTest();
-        ProviderIngestionService.ingestAll(new List<ProviderIngestionService.RowInput>{
-            new ProviderIngestionService.RowInput(2, row(FAMILY, '')),
-            new ProviderIngestionService.RowInput(3, row(INTERNAL, FAMILY))
+        ProviderIntakeService.ingestAll(new List<ProviderIntakeService.RowInput>{
+            new ProviderIntakeService.RowInput(2, row(FAMILY, '')),
+            new ProviderIntakeService.RowInput(3, row(INTERNAL, FAMILY))
         });
         Test.stopTest();
 
@@ -281,10 +281,10 @@ private class ProviderSpecialtyServiceTest {
         bad.put(ProviderCsvMapping.NPI_HEADER, '1234567890'); // bad check digit
 
         Test.startTest();
-        ProviderIngestionService.IngestResult result = ProviderIngestionService.ingest(bad);
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(bad);
         Test.stopTest();
 
-        Assert.areEqual(ProviderIngestionService.Outcome.ERROR, result.outcome, 'Malformed NPI');
+        Assert.areEqual(ProviderIntakeService.Outcome.ERROR, result.outcome, 'Malformed NPI');
         Assert.isTrue(links(existing().Healthcare_Provider__c).isEmpty(), 'Nothing linked');
     }
 }

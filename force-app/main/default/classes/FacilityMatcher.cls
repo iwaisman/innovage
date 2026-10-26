@@ -29,7 +29,7 @@ public without sharing class FacilityMatcher {
 
     public static final String FACILITY_RECORD_TYPE = 'Participant_Facility';
 
-    /* Error codes; these are RosterIngestionIssue__c.Code__c values. */
+    /* Error codes; these are Roster_Intake_Issue__c.Code__c values. */
     public static final String NO_FACILITY_KEY_VALUES = 'NO_FACILITY_KEY_VALUES';
     public static final String MALFORMED_FACILITY_UNIQUE_ID = 'MALFORMED_FACILITY_UNIQUE_ID';
     public static final String MALFORMED_FACILITY_NPI = 'MALFORMED_FACILITY_NPI';

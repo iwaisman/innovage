@@ -1,5 +1,5 @@
 /**
- * The row processing for one roster file type. RosterIngestionBatch handles
+ * The row processing for one roster file type. RosterIntakeBatch handles
  * everything else (the file, slices, Run status, Issues and counts) the same
  * way for every type.
  *
@@ -17,14 +17,14 @@ public interface RosterRowProcessor {
      * type needs to the context.
      *
      * @param context The Run's context; roster, Organization and run date are set
-     * @throws RosterIngestionRunService.RunException to fail the Run
+     * @throws RosterIntakeRunService.RunException to fail the Run
      */
-    void prepare(RosterIngestionRow.Context context);
+    void prepare(RosterIntakeRow.Context context);
 
     /**
      * @param rows One slice of rows, in file order
      * @param context The Run's context, as prepared
      * @return One result per row, in the same order
      */
-    List<RosterIngestionRow.Result> ingestAll(List<RosterIngestionRow.Input> rows, RosterIngestionRow.Context context);
+    List<RosterIntakeRow.Result> ingestAll(List<RosterIntakeRow.Input> rows, RosterIntakeRow.Context context);
 }

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Last_Provider_Run__c</fullName>
+    <description>When the most recent provider file intake run started, for the list view and page header.</description>
+    <inlineHelpText>Start time of the latest Provider intake run. Blank until a run has started.</inlineHelpText>
+    <label>Last Provider Run</label>
+    <summarizedField>Roster_Intake_Run__c.Started_At__c</summarizedField>
+    <summaryFilterItems>
+        <field>Roster_Intake_Run__c.File_Type__c</field>
+        <operation>equals</operation>
+        <value>Provider</value>
+    </summaryFilterItems>
+    <summaryForeignKey>Roster_Intake_Run__c.Roster_Intake__c</summaryForeignKey>
+    <summaryOperation>max</summaryOperation>
+    <type>Summary</type>
+</CustomField>
