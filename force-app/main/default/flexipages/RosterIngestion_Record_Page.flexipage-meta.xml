@@ -114,6 +114,16 @@
                     <name>uiBehavior</name>
                     <value>none</value>
                 </fieldInstanceProperties>
+                <fieldItem>Record.Relationship_Runs__c</fieldItem>
+                <identifier>RecordRelationship_Runs_cField</identifier>
+            </fieldInstance>
+        </itemInstances>
+        <itemInstances>
+            <fieldInstance>
+                <fieldInstanceProperties>
+                    <name>uiBehavior</name>
+                    <value>none</value>
+                </fieldInstanceProperties>
                 <fieldItem>Record.Last_Relationship_Run__c</fieldItem>
                 <identifier>RecordLast_Relationship_Run_cField</identifier>
             </fieldInstance>

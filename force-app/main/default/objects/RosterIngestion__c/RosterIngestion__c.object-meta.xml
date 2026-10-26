@@ -167,8 +167,11 @@
     <searchLayouts>
         <searchResultsAdditionalFields>Organization__c</searchResultsAdditionalFields>
         <searchResultsAdditionalFields>Personnel_File_Uploaded__c</searchResultsAdditionalFields>
+        <searchResultsAdditionalFields>Relationships_File_Uploaded__c</searchResultsAdditionalFields>
         <searchResultsAdditionalFields>Provider_Runs__c</searchResultsAdditionalFields>
         <searchResultsAdditionalFields>Last_Provider_Run__c</searchResultsAdditionalFields>
+        <searchResultsAdditionalFields>Relationship_Runs__c</searchResultsAdditionalFields>
+        <searchResultsAdditionalFields>Last_Relationship_Run__c</searchResultsAdditionalFields>
     </searchLayouts>
     <sharingModel>ReadWrite</sharingModel>
     <visibility>Public</visibility>

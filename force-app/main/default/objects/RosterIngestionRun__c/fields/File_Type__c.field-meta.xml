@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>File_Type__c</fullName>
-    <description>Which of the roster files was processed.</description>
+    <description>Which of the roster's files the run processed: Personnel (Providers, ProviderIngestionService) or Relationships (Provider-facility relationships, RelationshipIngestionService). Picks the row processor (RosterIngestionRunService.processorFor), filters the two run lists and control panels on the roster page, and splits the roster's roll-ups (Provider Runs / Relationship Runs).</description>
     <label>File Type</label>
     <required>false</required>
     <type>Picklist</type>

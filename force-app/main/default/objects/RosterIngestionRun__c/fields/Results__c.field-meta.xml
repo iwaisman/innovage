@@ -13,7 +13,7 @@
 & IF(Errored__c > 0, " · " & TEXT(Errored__c) & " err", "")
 & IF(Rows_With_Warnings__c > 0, " · " & TEXT(Rows_With_Warnings__c) & " warn", "")]]></formula>
     <formulaTreatBlanksAs>BlankAsZero</formulaTreatBlanksAs>
-    <inlineHelpText>Rows in the file, then: new = Providers or relationships created, upd = updated, term = rows that terminated relationships, same = unchanged, err = rows not ingested because of an error, warn = rows with at least one ignored value. Zero counts are not shown.</inlineHelpText>
+    <inlineHelpText>Rows in the file, then: new = Providers or relationships created, upd = updated, term = rows that terminated relationships, same = unchanged, err = rows not ingested because of an error, warn = rows with at least one warning. Zero counts are not shown.</inlineHelpText>
     <label>Results</label>
     <type>Text</type>
 </CustomField>

@@ -65,6 +65,10 @@
                 <behavior>Readonly</behavior>
                 <field>Updated__c</field>
             </layoutItems>
+            <layoutItems>
+                <behavior>Readonly</behavior>
+                <field>Terminated__c</field>
+            </layoutItems>
         </layoutColumns>
         <layoutColumns>
             <layoutItems>

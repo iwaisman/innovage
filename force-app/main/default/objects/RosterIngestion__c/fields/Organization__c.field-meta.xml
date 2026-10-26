@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Organization__c</fullName>
+    <description>The Organization (Account, record type Organization) this roster belongs to. Relationships ingestion only creates or terminates relationships at facilities whose Healthcare Facility Legal Owner is this Organization or an Organization below it (OrganizationScope); errors name it when a facility is outside that scope. Personnel ingestion does not use it: Providers are global. Deleting the Organization deletes its rosters, with their runs and issues.</description>
     <deleteConstraint>Cascade</deleteConstraint>
     <label>Organization</label>
     <lookupFilter>

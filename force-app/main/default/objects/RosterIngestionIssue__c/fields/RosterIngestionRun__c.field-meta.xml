@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>RosterIngestionRun__c</fullName>
-    <description>The run that found this issue.</description>
+    <description>The run that found this issue. Master-detail: the issues are listed (by severity, sorted by Row Number) on the run's page and deleted with the run.</description>
     <label>Roster Ingestion Run</label>
     <reparentableMasterDetail>false</reparentableMasterDetail>
     <referenceTo>RosterIngestionRun__c</referenceTo>

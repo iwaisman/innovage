@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Failure_Message__c</fullName>
-    <description>Why the run failed or was cancelled, for problems affecting the whole file.</description>
+    <description>Why the run did not fully succeed, for problems affecting the whole file or job rather than single rows: a file-level problem (not UTF-8, empty, malformed CSV, missing required column, too many rows), rows left unprocessed because part of the batch job failed, a job that ended unexpectedly, or who cancelled it. Row problems are Issues, not this field.</description>
     <label>Failure Message</label>
     <length>32768</length>
     <type>LongTextArea</type>

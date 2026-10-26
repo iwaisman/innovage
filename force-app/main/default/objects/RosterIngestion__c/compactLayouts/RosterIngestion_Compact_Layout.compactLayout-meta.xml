@@ -5,5 +5,7 @@
     <fields>Organization__c</fields>
     <fields>Provider_Runs__c</fields>
     <fields>Last_Provider_Run__c</fields>
+    <fields>Relationship_Runs__c</fields>
+    <fields>Last_Relationship_Run__c</fields>
     <label>RosterIngestion Compact Layout</label>
 </CompactLayout>

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Rows_With_Warnings__c</fullName>
-    <description>Rows with at least one ignored value.</description>
+    <description>Rows that were ingested but have at least one Warning Issue: an ignored invalid value, or a notice such as a start date that was not applied. Counted once per row however many warnings it has; also counted in Inserted, Updated, Terminated or Unchanged.</description>
     <label>Rows With Warnings</label>
     <precision>9</precision>
     <required>false</required>

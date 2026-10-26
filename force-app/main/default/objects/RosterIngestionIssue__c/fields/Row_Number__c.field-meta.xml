@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Row_Number__c</fullName>
-    <description>Spreadsheet row number of the CSV row (the header is row 1).</description>
+    <description>Spreadsheet row number of the CSV row (the header is row 1), so users can find the row in the file they uploaded.</description>
     <label>Row Number</label>
     <precision>9</precision>
     <required>false</required>

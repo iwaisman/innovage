@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Total_Rows__c</fullName>
-    <description>Data rows in the processed file, counted when the batch job parses it.</description>
+    <description>Data rows in the processed file (the header excluded), counted when the batch job parses it. Blank or zero if the file was never parsed. Compared with Rows Processed to show progress and to detect rows lost to a failed slice.</description>
     <label>Total Rows</label>
     <precision>9</precision>
     <required>false</required>

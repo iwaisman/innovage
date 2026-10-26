@@ -4,8 +4,11 @@
     <columns>NAME</columns>
     <columns>Organization__c</columns>
     <columns>Personnel_File_Uploaded__c</columns>
+    <columns>Relationships_File_Uploaded__c</columns>
     <columns>Provider_Runs__c</columns>
     <columns>Last_Provider_Run__c</columns>
+    <columns>Relationship_Runs__c</columns>
+    <columns>Last_Relationship_Run__c</columns>
     <columns>CREATEDBY_USER</columns>
     <columns>CREATED_DATE</columns>
     <filterScope>Everything</filterScope>

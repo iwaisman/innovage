@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Severity__c</fullName>
-    <description>Error: the row was not ingested. Warning: a value was ignored and the rest of the row was ingested.</description>
+    <description>Error: the row was not ingested. Warning: the row was ingested, but a value was ignored or something needs attention (e.g. a start date that was not applied, several active relationships for one pair).</description>
     <label>Severity</label>
     <required>false</required>
     <type>Picklist</type>

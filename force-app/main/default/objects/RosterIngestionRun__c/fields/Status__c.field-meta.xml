@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Status__c</fullName>
-    <description>Lifecycle of the run.</description>
+    <description>Lifecycle of the run. Queued: created, batch job not started. Running: the batch job has parsed the file and is processing slices. Completed: every row processed, none errored. Completed with Errors: some rows errored, or part of the job failed (see Failure Message). Failed: a problem with the whole file, every slice failed, or the job ended without finishing the run. Cancelled: stopped by a user. Queued and Running are 'active': they block a new run on the same roster.</description>
     <label>Status</label>
     <required>false</required>
     <type>Picklist</type>

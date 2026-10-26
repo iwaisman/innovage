@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Personnel_File__c</fullName>
-    <description>ContentDocument Id of the personnel file, set by the rosterIngestionFiles component. Get the current content via ContentDocument.LatestPublishedVersionId (or ContentVersion WHERE IsLatest = true).</description>
+    <description>ContentDocument Id (as text) of the personnel (Provider) file, set by the rosterIngestionFiles component when the first version is uploaded; later versions are uploaded on the file itself. A personnel run reads the latest version of this document at the moment it starts (RosterIngestionRunService.startRun). Text rather than a lookup because a lookup cannot reference ContentDocument.</description>
     <externalId>false</externalId>
     <inlineHelpText>The uploaded personnel file.</inlineHelpText>
     <label>Personnel File</label>

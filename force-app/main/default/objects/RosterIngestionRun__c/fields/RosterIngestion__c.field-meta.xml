@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>RosterIngestion__c</fullName>
-    <description>The roster whose file this run processed.</description>
+    <description>The roster whose file this run processed. Only one run per roster may be Queued or Running at a time, whatever its file type (RosterIngestionRunService). Master-detail: deleting the roster deletes its runs, and the roster's run counts and last-run dates are roll-ups of this relationship.</description>
     <label>Roster Ingestion</label>
     <reparentableMasterDetail>false</reparentableMasterDetail>
     <referenceTo>RosterIngestion__c</referenceTo>
