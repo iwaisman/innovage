@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
-    <label>Roster Intake Files</label>
-    <description>Upload provider and relationships files on Roster Intake records, run intake, and review its runs and issues.</description>
+    <label>Roster Intake</label>
+    <description>Create Roster Intake records, upload their provider and relationships files, run intake, and review its runs and issues.</description>
     <hasActivationRequired>false</hasActivationRequired>
     <classAccesses>
         <apexClass>RosterIntakeFileController</apexClass>

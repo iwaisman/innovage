@@ -96,7 +96,7 @@ row processor and the Run's context.
 | `rosterIntakeRunPanel` (LWC) | The control panel for one file type, chosen by its App Builder property **File Type**. The roster page has two: "Provider Intake" and "Relationship Intake". It has an *Ingest …* button, which asks for confirmation and is disabled while a run of its type is active. While a run is Queued or Running, it shows that run with a progress bar, the counts so far and a *Cancel* button, and refreshes every 3 s. When the run ends, it fires a standard page refresh so the run appears in its runs list and the header counts update. |
 | `Roster_Intake_Record_Page` | The RosterIntake record page: details, the `rosterIntakeFiles` panel, then for each file type its control panel and its runs list (**Provider Intake Runs**, **Relationship Intake Runs**). Each list is a standard Dynamic Related List of the roster's finished Runs of that type (Status Completed, Completed with Errors, Failed or Cancelled), newest first, showing Name, Status, Started At, Results, Failure Message, Created By and Version Number, with no action bar. Active runs appear only in the control panels. |
 | `Roster_Intake_Run_Record_Page` | The Run record page (desktop): the Run's details and counters, then **Errors** and **Warnings** tabs. Each tab is a standard Dynamic Related List of the Run's Issues, filtered by Severity and sorted by Row Number, showing Severity, Row, Code, Column, Message, Provider and Facility. Standard components are preferred over custom ones here, which is why there is no custom Issues component. |
-| `Roster_Intake_Files` (permission set) | Grants Read on Runs and Issues and their fields, Read/Edit on RosterIntake, and access to the controllers. |
+| `Roster_Intake` (permission set) | Grants Read on Runs and Issues and their fields, Read/Create/Edit on Roster Intake, visibility of its tab, and access to the controllers. |
 
 ## 4. How the classes relate
 
@@ -472,7 +472,7 @@ single-line address.
   who uploaded the file; otherwise it would create duplicates of records the
   uploader cannot see, or compute a scope that depends on the uploader.
 - The batch job runs as the user who started the Run.
-- Users need the `Roster_Intake_Files` permission set to see Runs and
+- Users need the `Roster_Intake` permission set to see Runs and
   Issues. The classes use API 67.0, which applies field-level security by
   default.
 - Issue messages never contain Provider field values. Sensitive values such as
@@ -514,7 +514,7 @@ limits, the slice size can be made per file type.
 - The batch queued by `startRun` runs at `Test.stopTest()`. When a test has
   already driven the Run to completion, that job finds the Run finished and
   does nothing.
-- Tests run as a user with the `Roster_Intake_Files` permission set
+- Tests run as a user with the `Roster_Intake` permission set
   (`ProviderTestDataFactory.createIntakeUser` and `System.runAs`), because
   API 67.0 enforces field-level security in test code too.
 - `RelationshipTestDataFactory` builds Organizations, facilities and Providers.

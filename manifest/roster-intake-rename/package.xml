@@ -102,7 +102,7 @@
         <name>ListView</name>
     </types>
     <types>
-        <members>Roster_Intake_Files</members>
+        <members>Roster_Intake</members>
         <name>PermissionSet</name>
     </types>
     <version>67.0</version>

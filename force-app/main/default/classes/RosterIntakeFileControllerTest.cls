@@ -21,7 +21,7 @@ private class RosterIntakeFileControllerTest {
         System.runAs(new User(Id = UserInfo.getUserId())) {
             insert new PermissionSetAssignment(
                 AssigneeId = user.Id,
-                PermissionSetId = [SELECT Id FROM PermissionSet WHERE Name = 'Roster_Intake_Files'].Id
+                PermissionSetId = [SELECT Id FROM PermissionSet WHERE Name = 'Roster_Intake'].Id
             );
         }
 

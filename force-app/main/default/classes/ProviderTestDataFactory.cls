@@ -143,7 +143,7 @@ public class ProviderTestDataFactory {
     }
 
     /**
-     * Creates a user with the Roster_Intake_Files permission set. Classes at
+     * Creates a user with the Roster_Intake permission set. Classes at
      * API 67.0 query in user mode by default, and users get access to the Run and
      * Issue fields only through this permission set; it takes effect inside
      * System.runAs.
@@ -168,7 +168,7 @@ public class ProviderTestDataFactory {
             insert user;
             insert new PermissionSetAssignment(
                 AssigneeId = user.Id,
-                PermissionSetId = [SELECT Id FROM PermissionSet WHERE Name = 'Roster_Intake_Files'].Id
+                PermissionSetId = [SELECT Id FROM PermissionSet WHERE Name = 'Roster_Intake'].Id
             );
         }
         return user;
