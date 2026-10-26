@@ -40,7 +40,7 @@ public with sharing class ProviderSpecialtyService {
     };
 
     /**
-     * One saved Provider and the codes from its row.
+     * One saved Provider, the codes from its row, and (after apply) what happened.
      */
     public class Request {
         /** The Provider Account; null when the row was not saved (nothing is linked). */
@@ -48,11 +48,14 @@ public with sharing class ProviderSpecialtyService {
         /** Codes as read by ProviderCsvMapping.specialtyCode: null = blank, '' = no code in the value. */
         public String primaryCode { get; private set; }
         public String secondaryCode { get; private set; }
+        /** Filled in by apply(). */
+        public Outcome outcome { get; private set; }
 
         public Request(Id accountId, String primaryCode, String secondaryCode) {
             this.accountId = accountId;
             this.primaryCode = primaryCode;
             this.secondaryCode = secondaryCode;
+            outcome = new Outcome();
         }
     }
 
@@ -76,22 +79,20 @@ public with sharing class ProviderSpecialtyService {
 
     /**
      * Links the Providers to their specialties: three queries and at most one
-     * update and one insert for the whole list.
+     * update and one insert for the whole list. Each request's outcome is
+     * recorded on it (Request.outcome).
      *
      * @param requests One per row, in file order
-     * @return One outcome per request, in the same order
      * @throws IllegalArgumentException if requests is null
      */
-    public static List<Outcome> apply(List<Request> requests) {
+    public static void apply(List<Request> requests) {
         if (requests == null) {
             throw new IllegalArgumentException('Requests cannot be null.');
         }
 
-        List<Outcome> outcomes = new List<Outcome>();
         Set<Id> accountIds = new Set<Id>();
         Set<String> codes = new Set<String>();
         for (Request request : requests) {
-            outcomes.add(new Outcome());
             if (request.accountId != null && (request.primaryCode != null || request.secondaryCode != null)) {
                 accountIds.add(request.accountId);
                 addCode(codes, request.primaryCode);
@@ -99,27 +100,26 @@ public with sharing class ProviderSpecialtyService {
             }
         }
         if (accountIds.isEmpty()) {
-            return outcomes;
+            return;
         }
 
         Map<Id, Id> healthcareProviderByAccount = queryHealthcareProviders(accountIds);
         Map<String, List<verifiable__VfiNUCCTaxonomy__c>> taxonomiesByCode = queryTaxonomies(codes);
         Links links = new Links(queryLinks(new Set<Id>(healthcareProviderByAccount.values())));
 
-        for (Integer i = 0; i < requests.size(); i++) {
-            plan(requests[i], outcomes[i], healthcareProviderByAccount, taxonomiesByCode, links);
+        for (Request request : requests) {
+            plan(request, healthcareProviderByAccount, taxonomiesByCode, links);
         }
         links.save();
-        return outcomes;
     }
 
     private static void plan(
         Request request,
-        Outcome outcome,
         Map<Id, Id> healthcareProviderByAccount,
         Map<String, List<verifiable__VfiNUCCTaxonomy__c>> taxonomiesByCode,
         Links links
     ) {
+        Outcome outcome = request.outcome;
         if (request.accountId == null || (request.primaryCode == null && request.secondaryCode == null)) {
             return;
         }
@@ -173,14 +173,27 @@ public with sharing class ProviderSpecialtyService {
     }
 
     /*
-     * One link (an existing HPT, or a new one to insert) and the rows whose
-     * outcome depends on saving it.
+     * A row whose outcome depends on saving a link, and the change it reports
+     * (PRIMARY_SPECIALTY / SECONDARY_SPECIALTY; null for a repair, which is not
+     * reported).
+     */
+    private class Dependency {
+        Outcome outcome;
+        String label;
+
+        Dependency(Outcome outcome, String label) {
+            this.outcome = outcome;
+            this.label = label;
+        }
+    }
+
+    /*
+     * One link (an existing HPT, or a new one to insert) and the rows that
+     * depend on saving it.
      */
     private class Link {
         HealthcareProviderTaxonomy record;
-        Boolean changed = false;
-        List<Outcome> outcomes = new List<Outcome>();
-        List<String> labels = new List<String>(); // parallel to outcomes; null = not a reported change
+        List<Dependency> dependencies = new List<Dependency>();
 
         Link(HealthcareProviderTaxonomy record) {
             this.record = record;
@@ -190,10 +203,41 @@ public with sharing class ProviderSpecialtyService {
             return record.Taxonomy_Code__c.toUpperCase();
         }
 
+        Boolean isNew() {
+            return record.Id == null;
+        }
+
+        /* Changed by this slice: an existing link with dependencies needs an update. */
+        Boolean isChanged() {
+            return !dependencies.isEmpty();
+        }
+
         void dependOn(Outcome outcome, String label) {
-            changed = true;
-            outcomes.add(outcome);
-            labels.add(label);
+            dependencies.add(new Dependency(outcome, label));
+        }
+
+        /* The fields an update of an existing link may change. */
+        HealthcareProviderTaxonomy changes() {
+            return new HealthcareProviderTaxonomy(
+                Id = record.Id,
+                IsPrimaryTaxonomy = record.IsPrimaryTaxonomy,
+                NUCC_Taxonomy__c = record.NUCC_Taxonomy__c
+            );
+        }
+
+        /* The save failed: every dependent row loses the change and gets a warning. */
+        void fail(List<Database.Error> errors) {
+            List<String> messages = new List<String>();
+            for (Database.Error error : errors) {
+                messages.add(error.getMessage());
+            }
+            for (Dependency dependency : dependencies) {
+                if (dependency.label != null) {
+                    dependency.outcome.changesByLabel.remove(dependency.label);
+                }
+                dependency.outcome.warn(SPECIALTY_NOT_SAVED, HEADERS_BY_CHANGE.get(dependency.label),
+                    'Specialty ' + record.Taxonomy_Code__c + ' could not be saved: ' + String.join(messages, '; '));
+            }
         }
 
         /* Refills a lookup cleared by a taxonomy reload (or pointing elsewhere); not a reported change. */
@@ -292,49 +336,38 @@ public with sharing class ProviderSpecialtyService {
         /* Updates (primary flags, refilled lookups) first, then inserts, each partial-success. */
         void save() {
             List<Link> updated = new List<Link>();
-            List<HealthcareProviderTaxonomy> updates = new List<HealthcareProviderTaxonomy>();
             List<Link> inserted = new List<Link>();
-            List<HealthcareProviderTaxonomy> inserts = new List<HealthcareProviderTaxonomy>();
             for (Link link : all) {
-                if (link.record.Id == null) {
+                if (link.isNew()) {
                     inserted.add(link);
-                    inserts.add(link.record);
-                } else if (link.changed) {
+                } else if (link.isChanged()) {
                     updated.add(link);
-                    updates.add(new HealthcareProviderTaxonomy(
-                        Id = link.record.Id,
-                        IsPrimaryTaxonomy = link.record.IsPrimaryTaxonomy,
-                        NUCC_Taxonomy__c = link.record.NUCC_Taxonomy__c
-                    ));
                 }
             }
-            if (!updates.isEmpty()) {
-                applySaveResults(Database.update(updates, false, AccessLevel.SYSTEM_MODE), updated);
-            }
-            if (!inserts.isEmpty()) {
-                applySaveResults(Database.insert(inserts, false, AccessLevel.SYSTEM_MODE), inserted);
-            }
+            saveAll(updated, false);
+            saveAll(inserted, true);
         }
     }
 
-    private static void applySaveResults(List<Database.SaveResult> saveResults, List<Link> links) {
-        for (Integer i = 0; i < saveResults.size(); i++) {
-            if (saveResults[i].isSuccess()) {
-                continue;
-            }
-            List<String> messages = new List<String>();
-            for (Database.Error error : saveResults[i].getErrors()) {
-                messages.add(error.getMessage());
-            }
-            Link link = links[i];
-            for (Integer j = 0; j < link.outcomes.size(); j++) {
-                Outcome outcome = link.outcomes[j];
-                String label = link.labels[j];
-                if (label != null) {
-                    outcome.changesByLabel.remove(label);
-                }
-                outcome.warn(SPECIALTY_NOT_SAVED, HEADERS_BY_CHANGE.get(label),
-                    'Specialty ' + link.record.Taxonomy_Code__c + ' could not be saved: ' + String.join(messages, '; '));
+    /*
+     * Inserts or updates the links' records. Salesforce returns one result per
+     * record in the order given, so result i belongs to links[i]: the only place
+     * this class pairs lists by index.
+     */
+    private static void saveAll(List<Link> links, Boolean asInsert) {
+        if (links.isEmpty()) {
+            return;
+        }
+        List<HealthcareProviderTaxonomy> records = new List<HealthcareProviderTaxonomy>();
+        for (Link link : links) {
+            records.add(asInsert ? link.record : link.changes());
+        }
+        List<Database.SaveResult> results = asInsert
+            ? Database.insert(records, false, AccessLevel.SYSTEM_MODE)
+            : Database.update(records, false, AccessLevel.SYSTEM_MODE);
+        for (Integer i = 0; i < results.size(); i++) {
+            if (!results[i].isSuccess()) {
+                links[i].fail(results[i].getErrors());
             }
         }
     }

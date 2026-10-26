@@ -90,6 +90,9 @@ public with sharing class ProviderIngestionService {
         public List<ProviderCsvMapping.ValueWarning> valueWarnings { get; private set; }
         public Map<String, FieldChange> changesByField { get; private set; }
 
+        /* This row's specialties, while applySpecialties runs. */
+        private ProviderSpecialtyService.Request specialties;
+
         private IngestResult(Integer rowNumber, ProviderCsvMapping.MappedRow mapped) {
             this.rowNumber = rowNumber;
             this.uniqueId = mapped.uniqueId;
@@ -120,13 +123,13 @@ public with sharing class ProviderIngestionService {
         }
 
         /* A specialty change makes an otherwise unchanged existing Provider UPDATED. */
-        private void addSpecialtyOutcome(ProviderSpecialtyService.Outcome specialties) {
-            for (ProviderCsvMapping.ValueWarning warning : specialties.warnings) {
+        private void addSpecialtyOutcome(ProviderSpecialtyService.Outcome specialtyOutcome) {
+            for (ProviderCsvMapping.ValueWarning warning : specialtyOutcome.warnings) {
                 warnings.add((warning.column == null ? '' : '"' + warning.column + '": ') + warning.message);
                 valueWarnings.add(warning);
             }
-            changesByField.putAll(specialties.changesByLabel);
-            if (outcome == ProviderIngestionService.Outcome.UNCHANGED && !specialties.changesByLabel.isEmpty()) {
+            changesByField.putAll(specialtyOutcome.changesByLabel);
+            if (outcome == ProviderIngestionService.Outcome.UNCHANGED && !specialtyOutcome.changesByLabel.isEmpty()) {
                 outcome = ProviderIngestionService.Outcome.UPDATED;
             }
         }
@@ -258,16 +261,17 @@ public with sharing class ProviderIngestionService {
         List<ProviderSpecialtyService.Request> requests = new List<ProviderSpecialtyService.Request>();
         for (Integer i = 0; i < results.size(); i++) {
             IngestResult result = results[i];
-            requests.add(new ProviderSpecialtyService.Request(
+            result.specialties = new ProviderSpecialtyService.Request(
                 result.outcome == Outcome.ERROR ? null : result.accountId,
                 mappedRows[i].primarySpecialtyCode,
                 mappedRows[i].secondarySpecialtyCode
-            ));
+            );
+            requests.add(result.specialties);
         }
 
-        List<ProviderSpecialtyService.Outcome> outcomes = ProviderSpecialtyService.apply(requests);
-        for (Integer i = 0; i < results.size(); i++) {
-            results[i].addSpecialtyOutcome(outcomes[i]);
+        ProviderSpecialtyService.apply(requests);
+        for (IngestResult result : results) {
+            result.addSpecialtyOutcome(result.specialties.outcome);
         }
     }
 
