@@ -39,7 +39,9 @@ UPDATES
   A blank cell leaves the stored value as it is.
 
 - Each field has a role.
-  Update: overwritten when the file's value differs (Phone, Email, Gender Identification, Pronouns, Primary and Secondary Provider Language). Fill if blank (NPI only): written only when the stored value is blank. Insert only: written when the Provider is created, never changed afterwards.
+  Update: overwritten when the file's value differs (Phone, Email, Gender Identification, Pronouns, Primary and Secondary Provider Language). 
+  Fill if blank (NPI only): written only when the stored value is blank. 
+  Insert only: written when the Provider is created, never changed afterwards.
 
 VALIDATION
 
