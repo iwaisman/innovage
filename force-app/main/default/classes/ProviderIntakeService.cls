@@ -43,6 +43,8 @@ public with sharing class ProviderIntakeService {
      */
     public static final String MISSING_LAST_NAME = 'MISSING_LAST_NAME';
     public static final String SAVE_ERROR = 'SAVE_ERROR';
+    /* A warning: an address on an existing Provider was not updated (see rejectAddresses). */
+    public static final String ADDRESS_NOT_UPDATED = 'ADDRESS_NOT_UPDATED';
 
     /**
      * The before and after value of one updated field.
@@ -118,6 +120,11 @@ public with sharing class ProviderIntakeService {
                     warnings.remove(i);
                 }
             }
+        }
+
+        private void warn(String code, String column, String message) {
+            warnings.add((column == null ? '' : '"' + column + '": ') + message);
+            valueWarnings.add(new ProviderCsvMapping.ValueWarning(code, column, message));
         }
 
         private void fail(String code, String message) {
@@ -363,10 +370,11 @@ public with sharing class ProviderIntakeService {
         PendingSaves saves
     ) {
         result.accountId = existing.Id;
+        Set<Schema.SObjectField> rejectedFields = rejectAddresses(existing, mapped, result);
 
         Map<Schema.SObjectField, Object> changedValuesByField = new Map<Schema.SObjectField, Object>();
         for (ProviderCsvMapping.FieldMapping mapping : ProviderCsvMapping.getUpdatableMappings()) {
-            if (!mapped.valuesByField.containsKey(mapping.field)) {
+            if (!mapped.valuesByField.containsKey(mapping.field) || rejectedFields.contains(mapping.field)) {
                 continue;
             }
 
@@ -390,6 +398,41 @@ public with sharing class ProviderIntakeService {
         }
 
         saves.addUpdate(existing.Id, changedValuesByField, result);
+    }
+
+    /*
+     * Checks each address the row gives (see ProviderCsvMapping.AddressGroup). An
+     * address with problems is not written at all: its per-column warnings are
+     * replaced by one ADDRESS_NOT_UPDATED warning listing them.
+     *
+     * Returns the fields of the rejected addresses.
+     */
+    private static Set<Schema.SObjectField> rejectAddresses(
+        Account existing,
+        ProviderCsvMapping.MappedRow mapped,
+        IngestResult result
+    ) {
+        Set<Schema.SObjectField> rejectedFields = new Set<Schema.SObjectField>();
+        for (ProviderCsvMapping.AddressGroup address : ProviderCsvMapping.ADDRESS_GROUPS) {
+            if (address.mappings[0].updatePolicy == ProviderCsvMapping.UpdatePolicy.INSERT_ONLY || !address.isGivenIn(mapped)) {
+                continue;
+            }
+            Map<String, String> problemsByColumn = address.problems(mapped, existing);
+            if (problemsByColumn.isEmpty()) {
+                continue;
+            }
+
+            for (ProviderCsvMapping.FieldMapping mapping : address.mappings) {
+                rejectedFields.add(mapping.field);
+                result.removeWarningsFor(String.join(mapping.headers, ' / '));
+            }
+            result.warn(
+                ADDRESS_NOT_UPDATED,
+                String.join(new List<String>(problemsByColumn.keySet()), ', '),
+                address.name + ' address not updated: ' + String.join(problemsByColumn.values(), '; ') + '.'
+            );
+        }
+        return rejectedFields;
     }
 
     /*

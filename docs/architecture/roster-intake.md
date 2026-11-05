@@ -264,7 +264,8 @@ For a list of rows it:
 3. **Plans** each row:
    - UNIQUE_MATCH: an update of the fields that changed. Each field's update
      policy is respected, and blank or invalid values are never written. A row
-     with nothing to change is UNCHANGED.
+     with nothing to change is UNCHANGED. Addresses are written as a group
+     (section 6.3).
    - NO_MATCH: an insert. A valid Last Name is required.
    - Any other outcome: an error.
 4. **Saves** with at most one partial-success `Database.insert` and one
@@ -330,6 +331,26 @@ No picklist, OVERWRITE).
   it is reported in `changesByField` as `HealthcareProvider.<field>`.
 - **No HealthcareProvider, or a failed save:** warning
   HEALTHCARE_PROVIDER_NOT_SAVED. The Provider is saved either way.
+
+### 6.3 Addresses
+
+The mailing and billing addresses are each a `ProviderCsvMapping.AddressGroup`:
+street (Line 1 and Line 2 joined with a line break), city, state and ZIP. The
+parts share one update policy (currently OVERWRITE).
+
+- **Insert:** each valid part is written, like any other field.
+- **Update:** `ProviderIntakeService.rejectAddresses` checks each address the
+  row gives (an address whose columns are all blank is left alone). If
+  `AddressGroup.problems` finds anything, none of the address's parts are
+  written; their per-column INVALID_VALUE warnings are replaced by one
+  ADDRESS_NOT_UPDATED warning that lists every problem, with the problem
+  columns in the Issue's Column. A part is a problem when its value is
+  invalid, when it is blank in the row but not on the Provider, or when Line 2
+  is given without Line 1. Line 2 may be blank when Line 1 is given.
+- Otherwise the parts that differ are written. Comparison is exact (case and
+  spaces count), by stakeholder decision.
+- The rest of the row is unaffected: a rejected address does not stop other
+  fields from being updated.
 
 ### Duplicate rows
 

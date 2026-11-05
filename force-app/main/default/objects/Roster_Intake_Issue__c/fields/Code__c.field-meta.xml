@@ -164,6 +164,16 @@
                 <default>false</default>
                 <label>SPECIALTY_NOT_SAVED</label>
             </value>
+            <value>
+                <fullName>HEALTHCARE_PROVIDER_NOT_SAVED</fullName>
+                <default>false</default>
+                <label>HEALTHCARE_PROVIDER_NOT_SAVED</label>
+            </value>
+            <value>
+                <fullName>ADDRESS_NOT_UPDATED</fullName>
+                <default>false</default>
+                <label>ADDRESS_NOT_UPDATED</label>
+            </value>
         </valueSetDefinition>
     </valueSet>
 </CustomField>

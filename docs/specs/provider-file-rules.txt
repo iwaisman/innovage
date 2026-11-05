@@ -36,12 +36,30 @@ MATCHING
 UPDATES
 
 - Blank values never overwrite or clear anything.
-  A blank cell leaves the stored value as it is.
+  A blank cell leaves the stored value as it is. Exception: a blank Address Line 2 removes a stored second line when the address is updated (see ADDRESSES).
 
 - Each field has a role.
-  Update: overwritten when the file's value differs (Phone, Email, Gender Identification, Pronouns, Primary and Secondary Provider Language, Initial and Last Credentialing Date, Provider Attests to Providing Gender Affirming Care?).
+  Update: overwritten when the file's value differs, compared exactly (Phone, Fax, Email, Gender Identification, Pronouns, Primary and Secondary Provider Language, Initial and Last Credentialing Date, Provider Attests to Providing Gender Affirming Care?, and the mailing and billing addresses, see ADDRESSES).
   Fill if blank (NPI only): written only when the stored value is blank. 
   Insert only: written when the Provider is created, never changed afterwards.
+
+ADDRESSES
+
+- A new Provider gets every valid address part given.
+  Each address column is checked on its own; an invalid one is ignored with warning INVALID_VALUE.
+
+- An existing Provider's address is updated as a whole, or not at all.
+  The mailing address (Line 1, Line 2, City, State, Zip) and the billing address are each checked as a group. If any part has a problem, no part of that address is written and the row gets one warning, ADDRESS_NOT_UPDATED, listing every problem, e.g. Mailing address not updated: incoming blank "Provider Mailing Zip" cannot overwrite the existing value. The rest of the row is still ingested. A part has a problem when:
+    - its value is invalid (e.g. a state that is not a 2-letter code), or
+    - it is blank in the file but not on the Provider, or
+    - it is Line 2, given without Line 1.
+  Line 2 may be blank when Line 1 is given; the street then becomes Line 1 alone, removing any stored second line.
+
+- An address left entirely blank is not changed.
+  If every column of an address is blank, it is left as it is, with no warning.
+
+- Addresses are compared exactly.
+  Case and spaces count: "DENVER" replaces "Denver", and "80202" replaces "80202-1234".
 
 VALIDATION
 

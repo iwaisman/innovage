@@ -122,11 +122,24 @@ public inherited sharing class ProviderCsvMapping {
         /** The same warnings, with the column kept separate from the message. */
         public List<ValueWarning> valueWarnings { get; private set; }
 
+        /** Why each dropped value was dropped, e.g. "not a valid ZIP code (12345 or 12345-6789)". */
+        public Map<Schema.SObjectField, String> invalidReasonsByField { get; private set; }
+
+        /** The mapped headers whose cell is blank or missing. */
+        public Set<String> blankHeaders { get; private set; }
+
         private MappedRow() {
             valuesByField = new Map<Schema.SObjectField, Object>();
             healthcareProviderValuesByField = new Map<Schema.SObjectField, Object>();
             warnings = new List<String>();
             valueWarnings = new List<ValueWarning>();
+            invalidReasonsByField = new Map<Schema.SObjectField, String>();
+            blankHeaders = new Set<String>();
+        }
+
+        private void drop(FieldMapping mapping, String reason) {
+            invalidReasonsByField.put(mapping.field, reason);
+            addWarning(mapping.headers, reason);
         }
 
         private void addWarning(List<String> headers, String reason) {
@@ -135,6 +148,27 @@ public inherited sharing class ProviderCsvMapping {
             valueWarnings.add(new ValueWarning(column, 'Ignored: ' + reason + '.'));
         }
     }
+
+    /* An address's mappings: street (Line 1 and Line 2), city, state, ZIP. Declared before MAPPINGS, which uses them. */
+    private static final List<FieldMapping> MAILING_ADDRESS = new List<FieldMapping>{
+        new FieldMapping(
+            new List<String>{ 'Provider Mailing Address Line 1', 'Provider Mailing Address Line 2' },
+            Account.PersonMailingStreet, ValueType.TEXT, UpdatePolicy.OVERWRITE
+        ),
+        new FieldMapping('Provider Mailing City', Account.PersonMailingCity, ValueType.TEXT, UpdatePolicy.OVERWRITE),
+        new FieldMapping('Provider Mailing State', Account.PersonMailingState, ValueType.STATE, UpdatePolicy.OVERWRITE),
+        new FieldMapping('Provider Mailing Zip', Account.PersonMailingPostalCode, ValueType.ZIP, UpdatePolicy.OVERWRITE)
+    };
+
+    private static final List<FieldMapping> BILLING_ADDRESS = new List<FieldMapping>{
+        new FieldMapping(
+            new List<String>{ 'Provider Billing Address Line 1', 'Provider Billing Address Line 2' },
+            Account.BillingStreet, ValueType.TEXT, UpdatePolicy.OVERWRITE
+        ),
+        new FieldMapping('Provider Billing City', Account.BillingCity, ValueType.TEXT, UpdatePolicy.OVERWRITE),
+        new FieldMapping('Provider Billing State', Account.BillingState, ValueType.STATE, UpdatePolicy.OVERWRITE),
+        new FieldMapping('Provider Billing Zip', Account.BillingPostalCode, ValueType.ZIP, UpdatePolicy.OVERWRITE)
+    };
 
     public static final List<FieldMapping> MAPPINGS = new List<FieldMapping>{
         new FieldMapping(NPI_HEADER, Account.NPI__c, ValueType.NPI, UpdatePolicy.FILL_IF_BLANK),
@@ -155,23 +189,11 @@ public inherited sharing class ProviderCsvMapping {
         new FieldMapping('Suffix (MD, DO, NP, RN etc)', Account.Suffix, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Date of Birth', Account.PersonBirthdate, ValueType.PAST_DATE, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Social Security Number', Account.Social_Security_Number_Provider__pc, ValueType.SSN, UpdatePolicy.INSERT_ONLY),
-        new FieldMapping('Provider Fax', Account.Fax, ValueType.PHONE, UpdatePolicy.INSERT_ONLY),
+        new FieldMapping('Provider Fax', Account.Fax, ValueType.PHONE, UpdatePolicy.OVERWRITE),
 
-        new FieldMapping(
-            new List<String>{ 'Provider Mailing Address Line 1', 'Provider Mailing Address Line 2' },
-            Account.PersonMailingStreet, ValueType.TEXT, UpdatePolicy.INSERT_ONLY
-        ),
-        new FieldMapping('Provider Mailing City', Account.PersonMailingCity, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
-        new FieldMapping('Provider Mailing State', Account.PersonMailingState, ValueType.STATE, UpdatePolicy.INSERT_ONLY),
-        new FieldMapping('Provider Mailing Zip', Account.PersonMailingPostalCode, ValueType.ZIP, UpdatePolicy.INSERT_ONLY),
-
-        new FieldMapping(
-            new List<String>{ 'Provider Billing Address Line 1', 'Provider Billing Address Line 2' },
-            Account.BillingStreet, ValueType.TEXT, UpdatePolicy.INSERT_ONLY
-        ),
-        new FieldMapping('Provider Billing City', Account.BillingCity, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
-        new FieldMapping('Provider Billing State', Account.BillingState, ValueType.STATE, UpdatePolicy.INSERT_ONLY),
-        new FieldMapping('Provider Billing Zip', Account.BillingPostalCode, ValueType.ZIP, UpdatePolicy.INSERT_ONLY),
+        // Addresses: see AddressGroup and ADDRESS_GROUPS below.
+        MAILING_ADDRESS[0], MAILING_ADDRESS[1], MAILING_ADDRESS[2], MAILING_ADDRESS[3],
+        BILLING_ADDRESS[0], BILLING_ADDRESS[1], BILLING_ADDRESS[2], BILLING_ADDRESS[3],
 
         // The "VFY_Account | Auto Create CAQH" flow, which failed inside the Verifiable package
         // when this was set, was deactivated on 2026-10-20 (docs/issues/caqh-verifiable-flow-failure.md).
@@ -207,6 +229,79 @@ public inherited sharing class ProviderCsvMapping {
             ValueType.PICKLIST,
             UpdatePolicy.OVERWRITE
         )
+    };
+
+    /**
+     * One address: its street (mapped from Line 1 and Line 2), city, state and ZIP.
+     *
+     * On an insert each valid part is written, like any other field. On an update
+     * the address is written as a group: when problems() finds anything, none of
+     * its parts are written. The parts must share one update policy.
+     */
+    public class AddressGroup {
+        /** e.g. "Mailing", as used in warnings. */
+        public String name { get; private set; }
+        /** The street's mapping first; its headers are Line 1 and Line 2. */
+        public List<FieldMapping> mappings { get; private set; }
+
+        private AddressGroup(String name, List<FieldMapping> mappings) {
+            this.name = name;
+            this.mappings = mappings;
+        }
+
+        /**
+         * @param mapped A mapped row
+         * @return false when every column of the address is blank (the address is then left as it is)
+         */
+        public Boolean isGivenIn(MappedRow mapped) {
+            for (FieldMapping mapping : mappings) {
+                for (String header : mapping.headers) {
+                    if (!mapped.blankHeaders.contains(header)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Why the row's address cannot replace the stored one. A part is a problem when:
+         *   - Line 2 is given without Line 1,
+         *   - its value is invalid, or
+         *   - it is blank in the row but not on the record.
+         * Line 2 may be blank when Line 1 is given.
+         *
+         * @param mapped A mapped row in which the address is given (see isGivenIn)
+         * @param stored The record as stored, with the address fields queried
+         * @return Column => reason, e.g. "Provider Mailing Zip" => "incoming blank "Provider
+         *         Mailing Zip" cannot overwrite the existing value"; empty when the address may be written
+         */
+        public Map<String, String> problems(MappedRow mapped, SObject stored) {
+            Map<String, String> problemsByColumn = new Map<String, String>();
+            for (FieldMapping mapping : mappings) {
+                String first = mapping.headers[0];
+                String column = String.join(mapping.headers, ' / ');
+                Boolean hasSecondLineOnly = mapping.headers.size() > 1
+                    && mapped.blankHeaders.contains(first)
+                    && !mapped.blankHeaders.contains(mapping.headers[1]);
+
+                if (hasSecondLineOnly) {
+                    problemsByColumn.put(column, '"' + mapping.headers[1] + '" is given without "' + first + '"');
+                } else if (mapped.invalidReasonsByField.containsKey(mapping.field)) {
+                    problemsByColumn.put(
+                        column, '"' + String.join(mapping.headers, '" / "') + '" is ' + mapped.invalidReasonsByField.get(mapping.field)
+                    );
+                } else if (!mapped.valuesByField.containsKey(mapping.field) && String.isNotBlank((String) stored.get(mapping.field))) {
+                    problemsByColumn.put(first, 'incoming blank "' + first + '" cannot overwrite the existing value');
+                }
+            }
+            return problemsByColumn;
+        }
+    }
+
+    public static final List<AddressGroup> ADDRESS_GROUPS = new List<AddressGroup>{
+        new AddressGroup('Mailing', MAILING_ADDRESS),
+        new AddressGroup('Billing', BILLING_ADDRESS)
     };
 
     private static final Map<ValueType, String> INVALID_REASONS_BY_TYPE = new Map<ValueType, String>{
@@ -273,6 +368,12 @@ public inherited sharing class ProviderCsvMapping {
         Map<Schema.SObjectField, Object> valuesByField
     ) {
         for (FieldMapping mapping : mappings) {
+            for (String header : mapping.headers) {
+                if (String.isBlank(row.get(header))) {
+                    mapped.blankHeaders.add(header);
+                }
+            }
+
             String rawValue = joinedValue(row, mapping.headers);
             if (String.isBlank(rawValue)) {
                 continue;
@@ -280,13 +381,13 @@ public inherited sharing class ProviderCsvMapping {
 
             Object value = normalize(mapping, rawValue);
             if (value == null) {
-                mapped.addWarning(mapping.headers, INVALID_REASONS_BY_TYPE.get(mapping.valueType));
+                mapped.drop(mapping, INVALID_REASONS_BY_TYPE.get(mapping.valueType));
                 continue;
             }
 
             Integer maxLength = mapping.field.getDescribe().getLength();
             if (value instanceof String && maxLength > 0 && ((String) value).length() > maxLength) {
-                mapped.addWarning(mapping.headers, 'longer than ' + maxLength + ' characters');
+                mapped.drop(mapping, 'longer than ' + maxLength + ' characters');
                 continue;
             }
 

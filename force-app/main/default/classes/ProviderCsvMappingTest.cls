@@ -301,10 +301,12 @@ private class ProviderCsvMappingTest {
         Assert.areEqual(
             new Set<String>{
                 'NPI__c', 'Phone', 'PersonEmail', 'PersonGender', 'PersonPronouns', 'Primary_Language__c', 'Secondary_Languages__c',
-                'Initial_Credentialing_Approval__pc', 'Last_Credentialing_Approval_Date__pc'
+                'Initial_Credentialing_Approval__pc', 'Last_Credentialing_Approval_Date__pc', 'Fax',
+                'PersonMailingStreet', 'PersonMailingCity', 'PersonMailingState', 'PersonMailingPostalCode',
+                'BillingStreet', 'BillingCity', 'BillingState', 'BillingPostalCode'
             },
             fieldNames,
-            'Only NPI, Phone, Email, gender, pronouns, languages and credentialing dates can change'
+            'Only NPI, contact details, gender, pronouns, languages, addresses and credentialing dates can change'
         );
     }
 

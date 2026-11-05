@@ -150,6 +150,201 @@ private class ProviderIntakeServiceTest {
         Assert.areEqual(before.PersonEmail, after.PersonEmail, 'Invalid email did not replace the stored email');
     }
 
+    // ─── Addresses on update ───────────────────────────────────────────
+
+    private static final String MAILING_LINE_1 = 'Provider Mailing Address Line 1';
+    private static final String MAILING_LINE_2 = 'Provider Mailing Address Line 2';
+    private static final String MAILING_CITY = 'Provider Mailing City';
+    private static final String MAILING_STATE = 'Provider Mailing State';
+    private static final String MAILING_ZIP = 'Provider Mailing Zip';
+
+    /* Gives the existing Provider the mailing address 100 Main St / Suite 200, Denver, CO 80202. */
+    private static Account existingWithMailingAddress() {
+        Account provider = existing(EXISTING);
+        update new Account(
+            Id = provider.Id,
+            PersonMailingStreet = '100 Main St\nSuite 200',
+            PersonMailingCity = 'Denver',
+            PersonMailingState = 'CO',
+            PersonMailingPostalCode = '80202'
+        );
+        return provider;
+    }
+
+    private static Account mailingAddress(Id accountId) {
+        return [
+            SELECT PersonMailingStreet, PersonMailingCity, PersonMailingState, PersonMailingPostalCode, Phone
+            FROM Account
+            WHERE Id = :accountId
+        ];
+    }
+
+    private static Map<String, String> mailingRow(String line1, String line2, String city, String state, String zip) {
+        Map<String, String> row = rowWithNpi(ProviderTestDataFactory.NPI_1);
+        row.put(MAILING_LINE_1, line1);
+        row.put(MAILING_LINE_2, line2);
+        row.put(MAILING_CITY, city);
+        row.put(MAILING_STATE, state);
+        row.put(MAILING_ZIP, zip);
+        return row;
+    }
+
+    private static void assertAddressNotUpdated(ProviderIntakeService.IngestResult result, Id accountId, String expectedMessage) {
+        Assert.areEqual(1, result.valueWarnings.size(), 'One warning for the address: ' + result.warnings);
+        Assert.areEqual(ProviderIntakeService.ADDRESS_NOT_UPDATED, result.valueWarnings[0].code, 'Address code');
+        Assert.areEqual(expectedMessage, result.valueWarnings[0].message, 'Message');
+
+        Account after = mailingAddress(accountId);
+        Assert.areEqual('100 Main St\nSuite 200', after.PersonMailingStreet, 'Street kept');
+        Assert.areEqual('Denver', after.PersonMailingCity, 'City kept');
+        Assert.areEqual('CO', after.PersonMailingState, 'State kept');
+        Assert.areEqual('80202', after.PersonMailingPostalCode, 'ZIP kept');
+    }
+
+    @IsTest
+    static void shouldUpdateWholeAddress_WhenLine2Blank() {
+        Account provider = existingWithMailingAddress();
+
+        Test.startTest();
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(mailingRow('200 Oak Ave', '', 'Boulder', 'co', '80301'));
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIntakeService.Outcome.UPDATED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(0, result.valueWarnings.size(), 'No warnings: ' + result.warnings);
+        Account after = mailingAddress(provider.Id);
+        Assert.areEqual('200 Oak Ave', after.PersonMailingStreet, 'Line 2 removed with the blank Line 2');
+        Assert.areEqual('Boulder', after.PersonMailingCity, 'City updated');
+        Assert.areEqual('CO', after.PersonMailingState, 'State unchanged (same value)');
+        Assert.areEqual('80301', after.PersonMailingPostalCode, 'ZIP updated');
+        Assert.isFalse(result.changesByField.containsKey('PersonMailingState'), 'Same state is not a change');
+    }
+
+    @IsTest
+    static void shouldNotUpdateAddress_WhenBlankWouldOverwriteValue() {
+        Account provider = existingWithMailingAddress();
+        Map<String, String> row = mailingRow('200 Oak Ave', '', 'Boulder', 'CO', '');
+        row.put('Provider Phone', '720-555-0199');
+
+        Test.startTest();
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row);
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIntakeService.Outcome.UPDATED, result.outcome, 'The phone is still updated');
+        Assert.areEqual(new Set<String>{ 'Phone' }, result.changesByField.keySet(), 'Only the phone changed');
+        Assert.areEqual(MAILING_ZIP, result.valueWarnings[0].column, 'Names the blank column');
+        assertAddressNotUpdated(
+            result, provider.Id,
+            'Mailing address not updated: incoming blank "Provider Mailing Zip" cannot overwrite the existing value.'
+        );
+        Assert.areEqual('(720) 555-0199', mailingAddress(provider.Id).Phone, 'Phone saved');
+    }
+
+    @IsTest
+    static void shouldNotUpdateAddress_WhenAnyPartInvalid() {
+        Account provider = existingWithMailingAddress();
+
+        Test.startTest();
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(mailingRow('200 Oak Ave', '', 'Boulder', 'CO', '8030'));
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIntakeService.Outcome.UNCHANGED, result.outcome, 'Nothing else changed');
+        assertAddressNotUpdated(
+            result, provider.Id,
+            'Mailing address not updated: "Provider Mailing Zip" is not a valid ZIP code (12345 or 12345-6789).'
+        );
+    }
+
+    @IsTest
+    static void shouldNotUpdateAddress_WhenLine2WithoutLine1() {
+        Account provider = existingWithMailingAddress();
+
+        Test.startTest();
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(mailingRow('', 'Suite 300', 'Denver', 'CO', '80202'));
+        Test.stopTest();
+
+        assertAddressNotUpdated(
+            result, provider.Id,
+            'Mailing address not updated: "Provider Mailing Address Line 2" is given without "Provider Mailing Address Line 1".'
+        );
+    }
+
+    @IsTest
+    static void shouldListEveryProblem_WhenSeveralPartsFail() {
+        Account provider = existingWithMailingAddress();
+
+        Test.startTest();
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(mailingRow('200 Oak Ave', '', '', 'Colorado', '80301'));
+        Test.stopTest();
+
+        Assert.areEqual(MAILING_CITY + ', ' + MAILING_STATE, result.valueWarnings[0].column, 'Names both columns');
+        assertAddressNotUpdated(
+            result, provider.Id,
+            'Mailing address not updated: incoming blank "Provider Mailing City" cannot overwrite the existing value; '
+                + '"Provider Mailing State" is not a 2-letter US state code.'
+        );
+    }
+
+    @IsTest
+    static void shouldLeaveAddress_WhenAllColumnsBlank() {
+        Account provider = existingWithMailingAddress();
+
+        Test.startTest();
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(mailingRow('', ' ', '', '', ''));
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIntakeService.Outcome.UNCHANGED, result.outcome, 'No address given');
+        Assert.areEqual(0, result.valueWarnings.size(), 'No warnings: ' + result.warnings);
+        Assert.areEqual('Denver', mailingAddress(provider.Id).PersonMailingCity, 'Address kept');
+    }
+
+    @IsTest
+    static void shouldUpdateAddress_WhenBlankPartIsBlankOnRecordToo() {
+        Account provider = existingWithMailingAddress();
+        update new Account(Id = provider.Id, PersonMailingPostalCode = null);
+
+        Test.startTest();
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(mailingRow('200 Oak Ave', '', 'Boulder', 'CO', ''));
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIntakeService.Outcome.UPDATED, result.outcome, 'Warnings: ' + result.warnings);
+        Assert.areEqual('Boulder', mailingAddress(provider.Id).PersonMailingCity, 'City updated');
+    }
+
+    @IsTest
+    static void shouldCompareAddressVerbatim() {
+        Account provider = existingWithMailingAddress();
+
+        Test.startTest();
+        ProviderIntakeService.IngestResult same = ProviderIntakeService.ingest(mailingRow('100 Main St', 'Suite 200', 'Denver', 'CO', '80202'));
+        ProviderIntakeService.IngestResult recased = ProviderIntakeService.ingest(mailingRow('100 Main St', 'Suite 200', 'DENVER', 'CO', '80202'));
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIntakeService.Outcome.UNCHANGED, same.outcome, 'Identical address: ' + same.changesByField);
+        Assert.areEqual(ProviderIntakeService.Outcome.UPDATED, recased.outcome, 'A case difference is a change');
+        Assert.areEqual(new Set<String>{ 'PersonMailingCity' }, recased.changesByField.keySet(), 'Only the city changed');
+        Assert.areEqual('DENVER', mailingAddress(provider.Id).PersonMailingCity, 'Written as given');
+    }
+
+    @IsTest
+    static void shouldInsertGivenAddressParts_WhenProviderNew() {
+        Map<String, String> row = ProviderTestDataFactory.createValidRow();
+        row.put(ProviderCsvMapping.NPI_HEADER, ProviderTestDataFactory.NPI_3);
+        row.put(MAILING_ZIP, '');
+        row.put(MAILING_STATE, 'Colorado');
+
+        Test.startTest();
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row);
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIntakeService.Outcome.INSERTED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(1, result.valueWarnings.size(), 'Only the invalid state warns: ' + result.warnings);
+        Assert.isNull(result.valueWarnings[0].code, 'A plain INVALID_VALUE warning (null code)');
+        Account inserted = mailingAddress(result.accountId);
+        Assert.areEqual('Denver', inserted.PersonMailingCity, 'Valid parts written');
+        Assert.isNull(inserted.PersonMailingState, 'Invalid state dropped');
+        Assert.isNull(inserted.PersonMailingPostalCode, 'Blank ZIP left blank');
+    }
+
     @IsTest
     static void shouldNotUpdateInsertOnlyFields() {
         Account before = existing(EXISTING);
