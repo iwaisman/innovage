@@ -271,7 +271,7 @@ public with sharing class RosterIntakeBatch implements Database.Batchable<Roster
 
         void addColumnCountError(RowItem item, Integer headerCount) {
             count('Rows_Errored__c');
-            issues.add(newIssue(item.rowNumber, RosterIntakeRunService.SEVERITY_ERROR, RosterIntakeRunService.CODE_COLUMN_COUNT,
+            issues.add(newIssue(item.rowNumber, RosterIntakeIssues.COLUMN_COUNT,
                 'The row has ' + item.values.size() + ' columns; the header has ' + headerCount + '.'));
         }
 
@@ -279,18 +279,10 @@ public with sharing class RosterIntakeBatch implements Database.Batchable<Roster
             count(COUNT_FIELDS_BY_OUTCOME.get(result.outcome));
 
             for (String error : result.errors) {
-                issues.add(withRowValues(
-                    newIssue(result.rowNumber, RosterIntakeRunService.SEVERITY_ERROR, result.errorCode, error),
-                    result
-                ));
+                issues.add(withRowValues(newIssue(result.rowNumber, result.error, error), result));
             }
             for (RosterIntakeRow.Warning warning : result.warnings) {
-                Roster_Intake_Issue__c issue = newIssue(
-                    result.rowNumber,
-                    RosterIntakeRunService.SEVERITY_WARNING,
-                    warning.code,
-                    warning.message
-                );
+                Roster_Intake_Issue__c issue = newIssue(result.rowNumber, warning.issue, warning.message);
                 issue.Column__c = warning.column?.left(255);
                 issues.add(withRowValues(issue, result));
             }
@@ -306,12 +298,13 @@ public with sharing class RosterIntakeBatch implements Database.Batchable<Roster
             }
         }
 
-        private Roster_Intake_Issue__c newIssue(Integer rowNumber, String severity, String code, String message) {
+        /* The Issue's code and severity come from its catalog entry. */
+        private Roster_Intake_Issue__c newIssue(Integer rowNumber, RosterIntakeIssues.Issue entry, String message) {
             return new Roster_Intake_Issue__c(
                 Roster_Intake_Run__c = runId,
                 Row_Number__c = rowNumber,
-                Severity__c = severity,
-                Code__c = code,
+                Severity__c = entry.severity,
+                Code__c = entry.code,
                 Message__c = message?.left(32768)
             );
         }

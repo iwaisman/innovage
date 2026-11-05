@@ -49,7 +49,7 @@ private class HealthcareProviderFieldServiceTest {
         Test.stopTest();
 
         Assert.areEqual(ProviderIntakeService.Outcome.INSERTED, result.outcome, 'Errors: ' + result.errors);
-        Assert.areEqual(0, result.valueWarnings.size(), 'No warnings: ' + result.warnings);
+        Assert.areEqual(0, result.warnings.size(), 'No warnings: ' + result.warnings);
         Id healthcareProviderId = [SELECT Healthcare_Provider__c FROM Account WHERE Id = :result.accountId].Healthcare_Provider__c;
         Assert.areEqual('Yes', genderAffirming(healthcareProviderId), 'Value takes the defined casing');
     }
@@ -93,8 +93,8 @@ private class HealthcareProviderFieldServiceTest {
         Test.stopTest();
 
         Assert.areEqual(ProviderIntakeService.Outcome.UNCHANGED, result.outcome, 'The invalid value is dropped');
-        Assert.areEqual(1, result.valueWarnings.size(), 'One warning: ' + result.warnings);
-        Assert.areEqual(GENDER_AFFIRMING_HEADER, result.valueWarnings[0].column, 'Warning names the column');
+        Assert.areEqual(1, result.warnings.size(), 'One warning: ' + result.warnings);
+        Assert.areEqual(GENDER_AFFIRMING_HEADER, result.warnings[0].column, 'Warning names the column');
         Assert.areEqual('No', genderAffirming(provider.Healthcare_Provider__c), 'Stored value kept');
     }
 
@@ -126,7 +126,7 @@ private class HealthcareProviderFieldServiceTest {
 
         Assert.areEqual(1, request.outcome.warnings.size(), 'One warning');
         Assert.areEqual(
-            HealthcareProviderFieldService.HEALTHCARE_PROVIDER_NOT_SAVED,
+            RosterIntakeIssues.HEALTHCARE_PROVIDER_NOT_SAVED.code,
             request.outcome.warnings[0].code,
             'Not-saved code'
         );

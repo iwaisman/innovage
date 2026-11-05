@@ -62,7 +62,8 @@ row processor and the Run's context.
 | `RosterIntakeRunService` | The user actions: start a Run of a file type (pin the file version, create the Run, launch the batch), cancel. Also holds the shared constants, `processorFor(fileType)`, `finish()` (set a Run's final status) and `failAbandonedRuns()`. |
 | `RosterIntakeBatch` | The processing, for any file type. `start()` loads and parses the whole file and prepares the Run's context; `execute()` hands one slice of rows to the file type's processor and records Issues and counts; `finish()` sets the final status. |
 | `RosterRowProcessor` | The interface each file type implements: `requiredHeaders()`, `prepare(context)` (once per Run) and `ingestAll(rows, context)` (once per slice). |
-| `RosterIntakeRow` | The shared types: `Input` (row number and values), `Result` (outcome, error, warnings, values to copy onto Issues), `Warning`, and `Context` (roster, Organization, run date, Organization scope). |
+| `RosterIntakeIssues` | The catalog of every Issue code: its severity (Error or Warning), the file type(s) that raise it, and when it is raised. Issues are raised with a catalog entry, never a bare code; `RosterIntakeRow.Result.fail()` and `RosterIntakeRow.Warning` reject an entry of the wrong severity, and `RosterIntakeBatch` writes each Issue's code and severity from its entry. New codes are declared here and added to the restricted `Roster_Intake_Issue__c.Code__c` picklist; `RosterIntakeIssuesTest` checks the two match. |
+| `RosterIntakeRow` | The shared types: `Input` (row number and values), `Result` (outcome, error, warnings, values to copy onto Issues), `Warning` (the one warning type every file type uses, from where a warning is raised to the Issue), and `Context` (roster, Organization, run date, Organization scope). |
 | `CsvParser` | RFC 4180 CSV parser. `parse()` returns every record; `toHeaders()` trims and validates the header row. |
 
 ### Provider file

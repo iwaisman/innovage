@@ -75,27 +75,6 @@ public inherited sharing class ProviderCsvMapping {
     }
 
     /**
-     * A value that was dropped because it is invalid. The message never contains the value.
-     */
-    public class ValueWarning {
-        /** The CSV header(s) the value came from, e.g. "Provider Email" or "Line 1 / Line 2". */
-        public String column { get; private set; }
-        public String message { get; private set; }
-        /** The Issue code; null means INVALID_VALUE. */
-        public String code { get; private set; }
-
-        public ValueWarning(String column, String message) {
-            this(null, column, message);
-        }
-
-        public ValueWarning(String code, String column, String message) {
-            this.code = code;
-            this.column = column;
-            this.message = message;
-        }
-    }
-
-    /**
      * The result of mapping one CSV row.
      */
     public class MappedRow {
@@ -116,11 +95,12 @@ public inherited sharing class ProviderCsvMapping {
         /** Valid, normalized, non-blank HealthcareProvider values. */
         public Map<Schema.SObjectField, Object> healthcareProviderValuesByField { get; private set; }
 
-        /** One message per dropped value, naming its header(s). */
-        public List<String> warnings { get; private set; }
-
-        /** The same warnings, with the column kept separate from the message. */
-        public List<ValueWarning> valueWarnings { get; private set; }
+        /**
+         * One INVALID_VALUE warning per dropped value. Its column is the value's
+         * header(s), e.g. "Provider Email" or "Line 1 / Line 2"; its message never
+         * contains the value.
+         */
+        public List<RosterIntakeRow.Warning> warnings { get; private set; }
 
         /** Why each dropped value was dropped, e.g. "not a valid ZIP code (12345 or 12345-6789)". */
         public Map<Schema.SObjectField, String> invalidReasonsByField { get; private set; }
@@ -131,21 +111,16 @@ public inherited sharing class ProviderCsvMapping {
         private MappedRow() {
             valuesByField = new Map<Schema.SObjectField, Object>();
             healthcareProviderValuesByField = new Map<Schema.SObjectField, Object>();
-            warnings = new List<String>();
-            valueWarnings = new List<ValueWarning>();
+            warnings = new List<RosterIntakeRow.Warning>();
             invalidReasonsByField = new Map<Schema.SObjectField, String>();
             blankHeaders = new Set<String>();
         }
 
         private void drop(FieldMapping mapping, String reason) {
             invalidReasonsByField.put(mapping.field, reason);
-            addWarning(mapping.headers, reason);
-        }
-
-        private void addWarning(List<String> headers, String reason) {
-            String column = String.join(headers, ' / ');
-            warnings.add('Ignored "' + String.join(headers, '" / "') + '": ' + reason + '.');
-            valueWarnings.add(new ValueWarning(column, 'Ignored: ' + reason + '.'));
+            warnings.add(new RosterIntakeRow.Warning(
+                RosterIntakeIssues.INVALID_VALUE, String.join(mapping.headers, ' / '), 'Ignored: ' + reason + '.'
+            ));
         }
     }
 

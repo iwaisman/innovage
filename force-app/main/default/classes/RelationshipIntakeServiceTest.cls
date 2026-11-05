@@ -145,7 +145,7 @@ private class RelationshipIntakeServiceTest {
         Test.stopTest();
 
         Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, result.outcome, 'Errors: ' + result.errors);
-        Assert.isTrue(hasWarning(result, RelationshipIntakeService.START_DATE_DIFFERS), 'Warns it was not applied: ' + result.warnings);
+        Assert.isTrue(hasWarning(result, RosterIntakeIssues.START_DATE_DIFFERS.code), 'Warns it was not applied: ' + result.warnings);
         Assert.isTrue(result.warnings[0].message.contains('No change was made'), 'Says so: ' + result.warnings[0].message);
         Assert.isNull(RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0].InitialStartDate, 'Only set when created');
     }
@@ -162,7 +162,7 @@ private class RelationshipIntakeServiceTest {
         Test.stopTest();
 
         Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, result.outcome, 'Errors: ' + result.errors);
-        Assert.isTrue(hasWarning(result, RelationshipIntakeService.START_DATE_DIFFERS), 'Warns: ' + result.warnings);
+        Assert.isTrue(hasWarning(result, RosterIntakeIssues.START_DATE_DIFFERS.code), 'Warns: ' + result.warnings);
         Assert.areEqual(Date.newInstance(2024, 6, 1), RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0].InitialStartDate, 'Not overwritten');
     }
 
@@ -203,7 +203,7 @@ private class RelationshipIntakeServiceTest {
 
         RosterIntakeRow.Result result = ingest(row);
 
-        assertError(result, RelationshipIntakeService.INVALID_START_DATE);
+        assertError(result, RosterIntakeIssues.INVALID_START_DATE.code);
         Assert.isTrue(result.errors[0].contains('"2026-03-15"'), 'Shows the value to fix: ' + result.errors[0]);
         Assert.isTrue(RelationshipTestDataFactory.relationshipsOf(provider('Alpha')).isEmpty(), 'Not created');
     }
@@ -222,9 +222,9 @@ private class RelationshipIntakeServiceTest {
         Test.stopTest();
 
         Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, created.outcome, 'No third one: ' + created.errors);
-        Assert.isTrue(hasWarning(created, RelationshipIntakeService.MULTIPLE_ACTIVE_RELATIONSHIPS), 'Create warns: ' + created.warnings);
+        Assert.isTrue(hasWarning(created, RosterIntakeIssues.MULTIPLE_ACTIVE_RELATIONSHIPS.code), 'Create warns: ' + created.warnings);
         Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, terminated.outcome, 'Errors: ' + terminated.errors);
-        Assert.isTrue(hasWarning(terminated, RelationshipIntakeService.MULTIPLE_ACTIVE_RELATIONSHIPS), 'Terminate warns: ' + terminated.warnings);
+        Assert.isTrue(hasWarning(terminated, RosterIntakeIssues.MULTIPLE_ACTIVE_RELATIONSHIPS.code), 'Terminate warns: ' + terminated.warnings);
         for (HealthcarePractitionerFacility relationship : RelationshipTestDataFactory.relationshipsOf(alpha)) {
             Assert.isFalse(relationship.IsActive, 'Both terminated');
         }
@@ -263,8 +263,8 @@ private class RelationshipIntakeServiceTest {
         Test.stopTest();
 
         Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, singleResult.outcome, 'Even a malformed date is ignored: ' + singleResult.errors);
-        Assert.isTrue(hasWarning(singleResult, RelationshipIntakeService.START_DATE_IGNORED), 'Warns: ' + singleResult.warnings);
-        Assert.isTrue(hasWarning(allResult, RelationshipIntakeService.START_DATE_IGNORED), 'All warns too: ' + allResult.warnings);
+        Assert.isTrue(hasWarning(singleResult, RosterIntakeIssues.START_DATE_IGNORED.code), 'Warns: ' + singleResult.warnings);
+        Assert.isTrue(hasWarning(allResult, RosterIntakeIssues.START_DATE_IGNORED.code), 'All warns too: ' + allResult.warnings);
     }
 
     @IsTest
@@ -277,7 +277,7 @@ private class RelationshipIntakeServiceTest {
         Test.stopTest();
 
         Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, result.outcome, 'Errors: ' + result.errors);
-        Assert.isTrue(hasWarning(result, RelationshipIntakeService.NO_ACTIVE_RELATIONSHIP), 'Warns: ' + result.warnings);
+        Assert.isTrue(hasWarning(result, RosterIntakeIssues.NO_ACTIVE_RELATIONSHIP.code), 'Warns: ' + result.warnings);
     }
 
     @IsTest
@@ -294,7 +294,7 @@ private class RelationshipIntakeServiceTest {
         Test.stopTest();
 
         Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, result.outcome, 'Errors: ' + result.errors);
-        Assert.isTrue(hasWarning(result, RelationshipIntakeService.FACILITY_COLUMNS_IGNORED), 'Warns about the facility column');
+        Assert.isTrue(hasWarning(result, RosterIntakeIssues.FACILITY_COLUMNS_IGNORED.code), 'Warns about the facility column');
         Id elsewhere = facility(ELSEWHERE).Healthcare_Facility__c;
         for (HealthcarePractitionerFacility relationship : RelationshipTestDataFactory.relationshipsOf(alpha)) {
             Boolean outOfScope = relationship.HealthcareFacilityId == elsewhere;
@@ -311,7 +311,7 @@ private class RelationshipIntakeServiceTest {
         Test.stopTest();
 
         Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, result.outcome, 'Errors: ' + result.errors);
-        Assert.isTrue(hasWarning(result, RelationshipIntakeService.NO_ACTIVE_RELATIONSHIP), 'Warns: ' + result.warnings);
+        Assert.isTrue(hasWarning(result, RosterIntakeIssues.NO_ACTIVE_RELATIONSHIP.code), 'Warns: ' + result.warnings);
     }
 
     @IsTest
@@ -321,7 +321,7 @@ private class RelationshipIntakeServiceTest {
 
         RosterIntakeRow.Result result = ingest(row);
 
-        assertError(result, RelationshipIntakeService.INVALID_TERMINATE_VALUE);
+        assertError(result, RosterIntakeIssues.INVALID_TERMINATE_VALUE.code);
     }
 
     // ─── Provider matching ─────────────────────────────────────────────
@@ -332,7 +332,7 @@ private class RelationshipIntakeServiceTest {
             ProviderTestDataFactory.NPI_UNUSED, facility(MAIN).InnovAge_Unique_ID__c, ''
         ));
 
-        assertError(result, RelationshipIntakeService.UNKNOWN_PROVIDER);
+        assertError(result, RosterIntakeIssues.UNKNOWN_PROVIDER.code);
     }
 
     @IsTest
@@ -363,7 +363,7 @@ private class RelationshipIntakeServiceTest {
 
         RosterIntakeRow.Result result = ingest(createRow(MAIN));
 
-        assertError(result, RelationshipIntakeService.PROVIDER_NOT_SET_UP);
+        assertError(result, RosterIntakeIssues.PROVIDER_NOT_SET_UP.code);
     }
 
     // ─── Facility matching ─────────────────────────────────────────────
@@ -372,7 +372,7 @@ private class RelationshipIntakeServiceTest {
     static void shouldFailNamingOwner_WhenFacilityOutsideScope() {
         RosterIntakeRow.Result result = ingest(createRow(ELSEWHERE));
 
-        assertError(result, FacilityMatcher.FACILITY_NOT_IN_ORGANIZATION);
+        assertError(result, RosterIntakeIssues.FACILITY_NOT_IN_ORGANIZATION.code);
         String message = result.errors[0];
         Assert.isTrue(message.contains('"' + OTHER_ORG + '"'), 'Names the owner: ' + message);
         Assert.isTrue(message.contains('"' + ROSTER_ORG + '"'), 'Names the roster Organization: ' + message);
@@ -383,7 +383,7 @@ private class RelationshipIntakeServiceTest {
     static void shouldFail_WhenFacilityHasNoLegalOwner() {
         RosterIntakeRow.Result result = ingest(createRow(UNOWNED));
 
-        assertError(result, FacilityMatcher.FACILITY_NOT_IN_ORGANIZATION);
+        assertError(result, RosterIntakeIssues.FACILITY_NOT_IN_ORGANIZATION.code);
         Assert.isTrue(result.errors[0].contains('no Legal Owner'), 'Says so: ' + result.errors[0]);
     }
 
@@ -392,7 +392,7 @@ private class RelationshipIntakeServiceTest {
         // A roster for the sub-organization cannot touch its parent's facilities.
         RosterIntakeRow.Result result = RelationshipIntakeService.ingest(createRow(MAIN), organizationId(SUB_ORG));
 
-        assertError(result, FacilityMatcher.FACILITY_NOT_IN_ORGANIZATION);
+        assertError(result, RosterIntakeIssues.FACILITY_NOT_IN_ORGANIZATION.code);
     }
 
     @IsTest
@@ -413,7 +413,7 @@ private class RelationshipIntakeServiceTest {
 
         RosterIntakeRow.Result result = ingest(row);
 
-        assertError(result, FacilityMatcher.MULTIPLE_FACILITY_MATCHES);
+        assertError(result, RosterIntakeIssues.MULTIPLE_FACILITY_MATCHES.code);
         Assert.isTrue(result.errors[0].contains(SHARED_A) && result.errors[0].contains(SHARED_B), 'Lists them: ' + result.errors[0]);
     }
 
@@ -432,7 +432,7 @@ private class RelationshipIntakeServiceTest {
         Map<String, String> row = RelationshipTestDataFactory.row(ALPHA_NPI, '', '');
         row.put(RelationshipCsvMapping.FACILITY_NPI_HEADER, ProviderTestDataFactory.NPI_UNUSED);
 
-        assertError(ingest(row), FacilityMatcher.FACILITY_NOT_FOUND);
+        assertError(ingest(row), RosterIntakeIssues.FACILITY_NOT_FOUND.code);
     }
 
     @IsTest
@@ -450,7 +450,7 @@ private class RelationshipIntakeServiceTest {
         Map<String, String> row = RelationshipTestDataFactory.row(ALPHA_NPI, '', '');
         row.put(RelationshipCsvMapping.FACILITY_ADDRESS_HEADER, '300 Pine Rd');
 
-        assertError(ingest(row), FacilityMatcher.FACILITY_NOT_FOUND);
+        assertError(ingest(row), RosterIntakeIssues.FACILITY_NOT_FOUND.code);
     }
 
     @IsTest
@@ -458,7 +458,7 @@ private class RelationshipIntakeServiceTest {
         Map<String, String> row = createRow(MAIN);
         row.put(RelationshipCsvMapping.FACILITY_ADDRESS_HEADER, '101 Main St');
 
-        assertError(ingest(row), FacilityMatcher.FACILITY_KEY_MISMATCH);
+        assertError(ingest(row), RosterIntakeIssues.FACILITY_KEY_MISMATCH.code);
     }
 
     @IsTest
@@ -466,7 +466,7 @@ private class RelationshipIntakeServiceTest {
         Map<String, String> row = createRow(MAIN);
         row.put(RelationshipCsvMapping.FACILITY_NPI_HEADER, OAK_NPI);
 
-        assertError(ingest(row), FacilityMatcher.FACILITY_KEY_MISMATCH);
+        assertError(ingest(row), RosterIntakeIssues.FACILITY_KEY_MISMATCH.code);
     }
 
     @IsTest
@@ -485,13 +485,13 @@ private class RelationshipIntakeServiceTest {
 
     @IsTest
     static void shouldFail_WhenFacilityKeysMissingOrMalformed() {
-        assertError(ingest(RelationshipTestDataFactory.row(ALPHA_NPI, '', '')), FacilityMatcher.NO_FACILITY_KEY_VALUES);
-        assertError(ingest(RelationshipTestDataFactory.row(ALPHA_NPI, 'P000000001abc', '')), FacilityMatcher.MALFORMED_FACILITY_UNIQUE_ID);
-        assertError(ingest(RelationshipTestDataFactory.row(ALPHA_NPI, 'MF999999999zzz', '')), FacilityMatcher.UNKNOWN_FACILITY_UNIQUE_ID);
+        assertError(ingest(RelationshipTestDataFactory.row(ALPHA_NPI, '', '')), RosterIntakeIssues.NO_FACILITY_KEY_VALUES.code);
+        assertError(ingest(RelationshipTestDataFactory.row(ALPHA_NPI, 'P000000001abc', '')), RosterIntakeIssues.MALFORMED_FACILITY_UNIQUE_ID.code);
+        assertError(ingest(RelationshipTestDataFactory.row(ALPHA_NPI, 'MF999999999zzz', '')), RosterIntakeIssues.UNKNOWN_FACILITY_UNIQUE_ID.code);
 
         Map<String, String> badNpi = RelationshipTestDataFactory.row(ALPHA_NPI, '', '');
         badNpi.put(RelationshipCsvMapping.FACILITY_NPI_HEADER, '1234567890');
-        assertError(ingest(badNpi), FacilityMatcher.MALFORMED_FACILITY_NPI);
+        assertError(ingest(badNpi), RosterIntakeIssues.MALFORMED_FACILITY_NPI.code);
     }
 
     // FACILITY_NOT_SET_UP is not tested: a validation rule stops Healthcare_Facility__c being
@@ -584,7 +584,7 @@ private class RelationshipIntakeServiceTest {
         });
         Test.stopTest();
 
-        assertError(results[0], FacilityMatcher.FACILITY_NOT_IN_ORGANIZATION);
+        assertError(results[0], RosterIntakeIssues.FACILITY_NOT_IN_ORGANIZATION.code);
         Assert.areEqual(RosterIntakeRow.Outcome.INSERTED, results[1].outcome, 'Errors: ' + results[1].errors);
     }
 }

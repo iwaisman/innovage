@@ -65,7 +65,7 @@ private class ProviderSpecialtyServiceTest {
     }
 
     private static Boolean hasWarning(ProviderIntakeService.IngestResult result, String code) {
-        for (ProviderCsvMapping.ValueWarning warning : result.valueWarnings) {
+        for (RosterIntakeRow.Warning warning : result.warnings) {
             if (warning.code == code) {
                 return true;
             }
@@ -220,7 +220,7 @@ private class ProviderSpecialtyServiceTest {
         Test.stopTest();
 
         Assert.areEqual(ProviderIntakeService.Outcome.UPDATED, result.outcome, 'The rest of the row is ingested');
-        Assert.isTrue(hasWarning(result, ProviderSpecialtyService.UNKNOWN_SPECIALTY), 'Warns: ' + result.warnings);
+        Assert.isTrue(hasWarning(result, RosterIntakeIssues.UNKNOWN_SPECIALTY.code), 'Warns: ' + result.warnings);
         Assert.isTrue(links(existing().Healthcare_Provider__c).isEmpty(), 'Nothing linked');
     }
 
@@ -230,7 +230,7 @@ private class ProviderSpecialtyServiceTest {
         ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row('Cardiology:', ''));
         Test.stopTest();
 
-        Assert.isTrue(hasWarning(result, ProviderSpecialtyService.UNKNOWN_SPECIALTY), 'Warns: ' + result.warnings);
+        Assert.isTrue(hasWarning(result, RosterIntakeIssues.UNKNOWN_SPECIALTY.code), 'Warns: ' + result.warnings);
     }
 
     @IsTest
@@ -239,7 +239,7 @@ private class ProviderSpecialtyServiceTest {
         ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row('Student:' + DUPLICATED, ''));
         Test.stopTest();
 
-        Assert.isTrue(hasWarning(result, ProviderSpecialtyService.AMBIGUOUS_SPECIALTY), 'Warns: ' + result.warnings);
+        Assert.isTrue(hasWarning(result, RosterIntakeIssues.AMBIGUOUS_SPECIALTY.code), 'Warns: ' + result.warnings);
         Assert.isTrue(links(existing().Healthcare_Provider__c).isEmpty(), 'Nothing linked');
     }
 
@@ -254,7 +254,7 @@ private class ProviderSpecialtyServiceTest {
         )[0];
         Test.stopTest();
 
-        Assert.areEqual(ProviderSpecialtyService.UNKNOWN_SPECIALTY, result.warnings[0].code, 'Issue gets the specialty code, not INVALID_VALUE');
+        Assert.areEqual(RosterIntakeIssues.UNKNOWN_SPECIALTY.code, result.warnings[0].code, 'Issue gets the specialty code, not INVALID_VALUE');
         Assert.areEqual(ProviderCsvMapping.PRIMARY_SPECIALTY_HEADER, result.warnings[0].column, 'Names the column');
     }
 

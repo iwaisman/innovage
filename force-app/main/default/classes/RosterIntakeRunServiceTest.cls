@@ -146,9 +146,9 @@ private class RosterIntakeRunServiceTest {
             Assert.areEqual(new Set<Integer>{ 4, 5, 6 }, issuesByRow.keySet(), 'One issue each for rows 4, 5 and 6');
             Assert.areEqual(AccountMatchResult.Outcome.UNKNOWN_UNIQUE_ID.name(), issuesByRow.get(4).Code__c, 'Row 4 names no existing Provider');
             Assert.areEqual(UNKNOWN_UNIQUE_ID, issuesByRow.get(4).Provider_Unique_ID__c, 'Issue keeps the row key');
-            Assert.areEqual(RosterIntakeRunService.SEVERITY_WARNING, issuesByRow.get(5).Severity__c, 'Row 5 is a warning');
+            Assert.areEqual(RosterIntakeIssues.SEVERITY_WARNING, issuesByRow.get(5).Severity__c, 'Row 5 is a warning');
             Assert.areEqual('Provider Email', issuesByRow.get(5).Column__c, 'Warning names the column');
-            Assert.areEqual(RosterIntakeRunService.CODE_COLUMN_COUNT, issuesByRow.get(6).Code__c, 'Row 6 has the wrong column count');
+            Assert.areEqual(RosterIntakeIssues.COLUMN_COUNT.code, issuesByRow.get(6).Code__c, 'Row 6 has the wrong column count');
         }
     }
 
@@ -243,7 +243,7 @@ private class RosterIntakeRunServiceTest {
                 WHERE Roster_Intake_Run__c = :runId
             ];
             Assert.areEqual(4, issue.Row_Number__c, 'Row 4 failed');
-            Assert.areEqual(FacilityMatcher.UNKNOWN_FACILITY_UNIQUE_ID, issue.Code__c, 'Unknown facility');
+            Assert.areEqual(RosterIntakeIssues.UNKNOWN_FACILITY_UNIQUE_ID.code, issue.Code__c, 'Unknown facility');
             Assert.areEqual(second.Id, issue.Provider__c, 'Issue links the Provider');
             Assert.areEqual('MF999999999zzz', issue.Facility_Unique_ID__c, 'Issue keeps the facility key');
         }

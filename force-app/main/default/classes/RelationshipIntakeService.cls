@@ -37,18 +37,6 @@
  */
 public with sharing class RelationshipIntakeService {
 
-    /* Error and warning codes besides the matchers'; these are Roster_Intake_Issue__c.Code__c values. */
-    public static final String UNKNOWN_PROVIDER = 'UNKNOWN_PROVIDER';
-    public static final String PROVIDER_NOT_SET_UP = 'PROVIDER_NOT_SET_UP';
-    public static final String INVALID_TERMINATE_VALUE = 'INVALID_TERMINATE_VALUE';
-    public static final String INVALID_START_DATE = 'INVALID_START_DATE';
-    public static final String MULTIPLE_ACTIVE_RELATIONSHIPS = 'MULTIPLE_ACTIVE_RELATIONSHIPS';
-    public static final String START_DATE_DIFFERS = 'START_DATE_DIFFERS';
-    public static final String START_DATE_IGNORED = 'START_DATE_IGNORED';
-    public static final String NO_ACTIVE_RELATIONSHIP = 'NO_ACTIVE_RELATIONSHIP';
-    public static final String FACILITY_COLUMNS_IGNORED = 'FACILITY_COLUMNS_IGNORED';
-    public static final String SAVE_ERROR = ProviderIntakeService.SAVE_ERROR;
-
     /* Provider fields used besides the keys. */
     private static final Set<String> PROVIDER_FIELDS = new Set<String>{ 'Name', 'Healthcare_Provider__c' };
 
@@ -158,14 +146,14 @@ public with sharing class RelationshipIntakeService {
             result.putIssueValue(Roster_Intake_Issue__c.Facility_NPI__c, mapped.facilityNpi);
 
             if (mapped.action == null) {
-                result.fail(INVALID_TERMINATE_VALUE, 'Terminate must be blank, "Single" or "All", not "' +
+                result.fail(RosterIntakeIssues.INVALID_TERMINATE_VALUE, 'Terminate must be blank, "Single" or "All", not "' +
                     mapped.terminateValue + '".');
                 return;
             }
 
             if (mapped.action == RelationshipCsvMapping.Action.CREATE) {
                 if (mapped.hasInvalidStartDate()) {
-                    result.fail(INVALID_START_DATE, 'Relationship Start Date "' + mapped.rawStartDate +
+                    result.fail(RosterIntakeIssues.INVALID_START_DATE, 'Relationship Start Date "' + mapped.rawStartDate +
                         '" is not a valid MM/DD/YYYY date.');
                 }
                 return;
@@ -173,11 +161,11 @@ public with sharing class RelationshipIntakeService {
 
             // A termination uses neither the start date nor (for All) the facility columns.
             if (String.isNotBlank(mapped.rawStartDate)) {
-                result.warn(START_DATE_IGNORED, RelationshipCsvMapping.START_DATE_HEADER,
+                result.warn(RosterIntakeIssues.START_DATE_IGNORED, RelationshipCsvMapping.START_DATE_HEADER,
                     'A start date has no meaning on a termination; the Relationship Start Date was ignored.');
             }
             if (mapped.action == RelationshipCsvMapping.Action.TERMINATE_ALL && mapped.hasFacilityValues()) {
-                result.warn(FACILITY_COLUMNS_IGNORED, null,
+                result.warn(RosterIntakeIssues.FACILITY_COLUMNS_IGNORED, null,
                     'Terminate is "All", so the facility columns were ignored.');
             }
         }
@@ -217,17 +205,17 @@ public with sharing class RelationshipIntakeService {
                     state.provider = match.account;
                     state.result.putIssueValue(Roster_Intake_Issue__c.Provider__c, match.account.Id);
                     if (match.account.Healthcare_Provider__c == null) {
-                        state.result.fail(PROVIDER_NOT_SET_UP, 'Provider "' + match.account.Name +
+                        state.result.fail(RosterIntakeIssues.PROVIDER_NOT_SET_UP, 'Provider "' + match.account.Name +
                             '" has no Healthcare Provider record.');
                     }
                 }
                 when NO_MATCH {
                     // Only possible without a Unique ID: the NPI matched no one.
-                    state.result.fail(UNKNOWN_PROVIDER, 'No Provider has NPI ' + state.mapped.providerNpi +
+                    state.result.fail(RosterIntakeIssues.UNKNOWN_PROVIDER, 'No Provider has NPI ' + state.mapped.providerNpi +
                         '. Ingest the Provider from the provider file first.');
                 }
                 when else {
-                    state.result.fail(match.outcome.name(), match.message);
+                    state.result.fail(RosterIntakeIssues.forMatchOutcome(match.outcome), match.message);
                 }
             }
         }
@@ -260,7 +248,7 @@ public with sharing class RelationshipIntakeService {
             FacilityMatcher.FacilityMatch match = matches[i];
             state.result.putIssueValue(Roster_Intake_Issue__c.Facility__c, match.facility?.Id);
             if (match.isError()) {
-                state.result.fail(match.errorCode, match.message);
+                state.result.fail(match.error, match.message);
             } else {
                 state.facility = match.facility;
             }
@@ -304,7 +292,7 @@ public with sharing class RelationshipIntakeService {
             when TERMINATE_SINGLE {
                 Pair pair = ledger.find(state.healthcareProviderId(), state.healthcareFacilityId());
                 if (pair == null || pair.active.isEmpty()) {
-                    result.warn(NO_ACTIVE_RELATIONSHIP, null, 'Provider "' + state.provider.Name +
+                    result.warn(RosterIntakeIssues.NO_ACTIVE_RELATIONSHIP, null, 'Provider "' + state.provider.Name +
                         '" has no active relationship with facility "' + state.facility.Name + '"; nothing was terminated.');
                     result.succeed(RosterIntakeRow.Outcome.UNCHANGED);
                     return;
@@ -325,7 +313,7 @@ public with sharing class RelationshipIntakeService {
                 if (terminatedAny) {
                     result.succeed(RosterIntakeRow.Outcome.TERMINATED);
                 } else {
-                    result.warn(NO_ACTIVE_RELATIONSHIP, null, 'Provider "' + state.provider.Name +
+                    result.warn(RosterIntakeIssues.NO_ACTIVE_RELATIONSHIP, null, 'Provider "' + state.provider.Name +
                         '" has no active relationships at facilities of this Organization; nothing was terminated.');
                     result.succeed(RosterIntakeRow.Outcome.UNCHANGED);
                 }
@@ -353,11 +341,11 @@ public with sharing class RelationshipIntakeService {
         warnIfSeveralActive(pair, state, result, 'no new one was created');
         Date storedStartDate = pair.active[0].record.InitialStartDate;
         if (startDate != null && storedStartDate == null) {
-            result.warn(START_DATE_DIFFERS, RelationshipCsvMapping.START_DATE_HEADER,
+            result.warn(RosterIntakeIssues.START_DATE_DIFFERS, RelationshipCsvMapping.START_DATE_HEADER,
                 'The relationship already exists without a start date; the file\'s ' + startDate.format() +
                 ' was not applied (start dates are only set when a relationship is created). No change was made.');
         } else if (startDate != null && startDate != storedStartDate) {
-            result.warn(START_DATE_DIFFERS, RelationshipCsvMapping.START_DATE_HEADER,
+            result.warn(RosterIntakeIssues.START_DATE_DIFFERS, RelationshipCsvMapping.START_DATE_HEADER,
                 'The relationship already exists with start date ' + storedStartDate.format() +
                 '; the file\'s ' + startDate.format() + ' was not applied. No change was made.');
         }
@@ -388,7 +376,7 @@ public with sharing class RelationshipIntakeService {
      */
     private static void warnIfSeveralActive(Pair pair, RowState state, RosterIntakeRow.Result result, String consequence) {
         if (pair.active.size() > 1) {
-            result.warn(MULTIPLE_ACTIVE_RELATIONSHIPS, null, 'Provider "' + state.provider.Name + '" has ' +
+            result.warn(RosterIntakeIssues.MULTIPLE_ACTIVE_RELATIONSHIPS, null, 'Provider "' + state.provider.Name + '" has ' +
                 pair.active.size() + ' active relationships with facility "' + pair.facilityName + '"; ' +
                 consequence + '. Check why there is more than one.');
         }
@@ -541,7 +529,7 @@ public with sharing class RelationshipIntakeService {
                 messages.add(error.getMessage() + fields);
             }
             for (RosterIntakeRow.Result result : entries[i].results) {
-                result.fail(SAVE_ERROR, 'The relationship could not be saved: ' + String.join(messages, '; '));
+                result.fail(RosterIntakeIssues.SAVE_ERROR, 'The relationship could not be saved: ' + String.join(messages, '; '));
             }
         }
     }

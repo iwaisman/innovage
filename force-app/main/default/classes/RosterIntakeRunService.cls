@@ -37,10 +37,6 @@ public with sharing class RosterIntakeRunService {
         FILE_TYPE_RELATIONSHIPS => Roster_Intake__c.Relationships_File_ID__c
     };
 
-    public static final String SEVERITY_ERROR = 'Error';
-    public static final String SEVERITY_WARNING = 'Warning';
-    public static final String CODE_COLUMN_COUNT = 'COLUMN_COUNT';
-    public static final String CODE_INVALID_VALUE = 'INVALID_VALUE';
 
     /*
      * Rows per execute() of RosterIntakeBatch. 200 rows cost about 3 s of

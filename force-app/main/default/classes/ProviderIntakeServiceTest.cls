@@ -190,9 +190,9 @@ private class ProviderIntakeServiceTest {
     }
 
     private static void assertAddressNotUpdated(ProviderIntakeService.IngestResult result, Id accountId, String expectedMessage) {
-        Assert.areEqual(1, result.valueWarnings.size(), 'One warning for the address: ' + result.warnings);
-        Assert.areEqual(ProviderIntakeService.ADDRESS_NOT_UPDATED, result.valueWarnings[0].code, 'Address code');
-        Assert.areEqual(expectedMessage, result.valueWarnings[0].message, 'Message');
+        Assert.areEqual(1, result.warnings.size(), 'One warning for the address: ' + result.warnings);
+        Assert.areEqual(RosterIntakeIssues.ADDRESS_NOT_UPDATED.code, result.warnings[0].code, 'Address code');
+        Assert.areEqual(expectedMessage, result.warnings[0].message, 'Message');
 
         Account after = mailingAddress(accountId);
         Assert.areEqual('100 Main St\nSuite 200', after.PersonMailingStreet, 'Street kept');
@@ -210,7 +210,7 @@ private class ProviderIntakeServiceTest {
         Test.stopTest();
 
         Assert.areEqual(ProviderIntakeService.Outcome.UPDATED, result.outcome, 'Errors: ' + result.errors);
-        Assert.areEqual(0, result.valueWarnings.size(), 'No warnings: ' + result.warnings);
+        Assert.areEqual(0, result.warnings.size(), 'No warnings: ' + result.warnings);
         Account after = mailingAddress(provider.Id);
         Assert.areEqual('200 Oak Ave', after.PersonMailingStreet, 'Line 2 removed with the blank Line 2');
         Assert.areEqual('Boulder', after.PersonMailingCity, 'City updated');
@@ -231,7 +231,7 @@ private class ProviderIntakeServiceTest {
 
         Assert.areEqual(ProviderIntakeService.Outcome.UPDATED, result.outcome, 'The phone is still updated');
         Assert.areEqual(new Set<String>{ 'Phone' }, result.changesByField.keySet(), 'Only the phone changed');
-        Assert.areEqual(MAILING_ZIP, result.valueWarnings[0].column, 'Names the blank column');
+        Assert.areEqual(MAILING_ZIP, result.warnings[0].column, 'Names the blank column');
         assertAddressNotUpdated(
             result, provider.Id,
             'Mailing address not updated: incoming blank "Provider Mailing Zip" cannot overwrite the existing value.'
@@ -276,7 +276,7 @@ private class ProviderIntakeServiceTest {
         ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(mailingRow('200 Oak Ave', '', '', 'Colorado', '80301'));
         Test.stopTest();
 
-        Assert.areEqual(MAILING_CITY + ', ' + MAILING_STATE, result.valueWarnings[0].column, 'Names both columns');
+        Assert.areEqual(MAILING_CITY + ', ' + MAILING_STATE, result.warnings[0].column, 'Names both columns');
         assertAddressNotUpdated(
             result, provider.Id,
             'Mailing address not updated: incoming blank "Provider Mailing City" cannot overwrite the existing value; '
@@ -293,7 +293,7 @@ private class ProviderIntakeServiceTest {
         Test.stopTest();
 
         Assert.areEqual(ProviderIntakeService.Outcome.UNCHANGED, result.outcome, 'No address given');
-        Assert.areEqual(0, result.valueWarnings.size(), 'No warnings: ' + result.warnings);
+        Assert.areEqual(0, result.warnings.size(), 'No warnings: ' + result.warnings);
         Assert.areEqual('Denver', mailingAddress(provider.Id).PersonMailingCity, 'Address kept');
     }
 
@@ -337,8 +337,8 @@ private class ProviderIntakeServiceTest {
         Test.stopTest();
 
         Assert.areEqual(ProviderIntakeService.Outcome.INSERTED, result.outcome, 'Errors: ' + result.errors);
-        Assert.areEqual(1, result.valueWarnings.size(), 'Only the invalid state warns: ' + result.warnings);
-        Assert.isNull(result.valueWarnings[0].code, 'A plain INVALID_VALUE warning (null code)');
+        Assert.areEqual(1, result.warnings.size(), 'Only the invalid state warns: ' + result.warnings);
+        Assert.areEqual(RosterIntakeIssues.INVALID_VALUE.code, result.warnings[0].code, 'A plain INVALID_VALUE warning');
         Account inserted = mailingAddress(result.accountId);
         Assert.areEqual('Denver', inserted.PersonMailingCity, 'Valid parts written');
         Assert.isNull(inserted.PersonMailingState, 'Invalid state dropped');
@@ -469,7 +469,7 @@ private class ProviderIntakeServiceTest {
 
         Assert.areEqual(ProviderIntakeService.Outcome.INSERTED, results[0].outcome, 'First row inserts: ' + results[0].errors);
         Assert.areEqual(ProviderIntakeService.Outcome.ERROR, results[1].outcome, 'Second insert is rejected');
-        Assert.areEqual(ProviderIntakeService.SAVE_ERROR, results[1].errorCode, 'By the database (NPI__c is unique)');
+        Assert.areEqual(RosterIntakeIssues.SAVE_ERROR.code, results[1].errorCode, 'By the database (NPI__c is unique)');
         Assert.areEqual(1, [SELECT COUNT() FROM Account WHERE NPI__c = :npi], 'One Provider inserted');
     }
 
@@ -529,9 +529,9 @@ private class ProviderIntakeServiceTest {
         );
         Test.stopTest();
 
-        Assert.areEqual(1, results[0].valueWarnings.size(), 'One structured warning');
-        Assert.areEqual('Provider Email', results[0].valueWarnings[0].column, 'Names the column');
-        Assert.isFalse(results[0].valueWarnings[0].message.contains('not-an-email'), 'Never echoes the value');
+        Assert.areEqual(1, results[0].warnings.size(), 'One structured warning');
+        Assert.areEqual('Provider Email', results[0].warnings[0].column, 'Names the column');
+        Assert.isFalse(results[0].warnings[0].message.contains('not-an-email'), 'Never echoes the value');
     }
 
     @IsTest
@@ -553,7 +553,6 @@ private class ProviderIntakeServiceTest {
         Test.stopTest();
 
         Assert.areEqual(AccountMatchResult.Outcome.MALFORMED_NPI.name(), result.errorCode, 'Reported as an error');
-        Assert.areEqual(0, result.valueWarnings.size(), 'Not repeated as a warning: ' + result.warnings);
-        Assert.areEqual(0, result.warnings.size(), 'Plain warnings stay in step');
+        Assert.areEqual(0, result.warnings.size(), 'Not repeated as a warning: ' + result.warnings);
     }
 }

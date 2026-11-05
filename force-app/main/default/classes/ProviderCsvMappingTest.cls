@@ -12,7 +12,7 @@ private class ProviderCsvMappingTest {
 
         Assert.isFalse(mapped.valuesByField.containsKey(field), header + ' "' + value + '" should be dropped');
         Assert.areEqual(1, mapped.warnings.size(), 'One warning for the dropped value: ' + mapped.warnings);
-        Assert.isTrue(mapped.warnings[0].contains(header), 'Warning names the header');
+        Assert.isTrue(mapped.warnings[0].column.contains(header), 'Warning names the header');
     }
 
     // ─── Valid values ──────────────────────────────────────────────────
@@ -262,7 +262,7 @@ private class ProviderCsvMappingTest {
         ProviderCsvMapping.MappedRow mapped = mapWith('Social Security Number', '666-12-3456');
         Test.stopTest();
 
-        Assert.isFalse(mapped.warnings[0].contains('666'), 'Sensitive values are not echoed in warnings');
+        Assert.isFalse(mapped.warnings[0].message.contains('666'), 'Sensitive values are not echoed in warnings');
     }
 
     @IsTest

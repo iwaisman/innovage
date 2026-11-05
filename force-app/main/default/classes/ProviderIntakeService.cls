@@ -37,15 +37,6 @@ public with sharing class ProviderIntakeService {
 
     public enum Outcome { INSERTED, UPDATED, UNCHANGED, ERROR }
 
-    /*
-     * Error codes besides the AccountMatchResult.Outcome names. These are the
-     * values of Roster_Intake_Issue__c.Code__c.
-     */
-    public static final String MISSING_LAST_NAME = 'MISSING_LAST_NAME';
-    public static final String SAVE_ERROR = 'SAVE_ERROR';
-    /* A warning: an address on an existing Provider was not updated (see rejectAddresses). */
-    public static final String ADDRESS_NOT_UPDATED = 'ADDRESS_NOT_UPDATED';
-
     /**
      * The before and after value of one updated field.
      */
@@ -88,11 +79,10 @@ public with sharing class ProviderIntakeService {
         /** The Provider updated, matched, or inserted. */
         public Id accountId { get; private set; }
 
-        /** Why the row is an ERROR: an AccountMatchResult.Outcome name or one of this class's codes. */
-        public String errorCode { get; private set; }
+        /** Why the row is an ERROR (see RosterIntakeIssues). */
+        public RosterIntakeIssues.Issue error { get; private set; }
         public List<String> errors { get; private set; }
-        public List<String> warnings { get; private set; }
-        public List<ProviderCsvMapping.ValueWarning> valueWarnings { get; private set; }
+        public List<RosterIntakeRow.Warning> warnings { get; private set; }
         public Map<String, FieldChange> changesByField { get; private set; }
 
         /* This row's specialties and HealthcareProvider fields, while they are applied. */
@@ -104,8 +94,7 @@ public with sharing class ProviderIntakeService {
             this.uniqueId = mapped.uniqueId;
             this.npi = mapped.npi;
             errors = new List<String>();
-            warnings = new List<String>(mapped.warnings);
-            valueWarnings = new List<ProviderCsvMapping.ValueWarning>(mapped.valueWarnings);
+            warnings = new List<RosterIntakeRow.Warning>(mapped.warnings);
             changesByField = new Map<String, FieldChange>();
         }
 
@@ -114,22 +103,26 @@ public with sharing class ProviderIntakeService {
          * the value is invalid.
          */
         private void removeWarningsFor(String column) {
-            for (Integer i = valueWarnings.size() - 1; i >= 0; i--) {
-                if (valueWarnings[i].column == column) {
-                    valueWarnings.remove(i);
+            for (Integer i = warnings.size() - 1; i >= 0; i--) {
+                if (warnings[i].column == column) {
                     warnings.remove(i);
                 }
             }
         }
 
-        private void warn(String code, String column, String message) {
-            warnings.add((column == null ? '' : '"' + column + '": ') + message);
-            valueWarnings.add(new ProviderCsvMapping.ValueWarning(code, column, message));
+        /** The error's Roster_Intake_Issue__c.Code__c value, or null. */
+        public String errorCode {
+            get { return error?.code; }
         }
 
-        private void fail(String code, String message) {
+        private void warn(RosterIntakeIssues.Issue issue, String column, String message) {
+            warnings.add(new RosterIntakeRow.Warning(issue, column, message));
+        }
+
+        private void fail(RosterIntakeIssues.Issue issue, String message) {
+            RosterIntakeIssues.requireSeverity(issue, RosterIntakeIssues.SEVERITY_ERROR);
             outcome = ProviderIntakeService.Outcome.ERROR;
-            errorCode = code;
+            error = issue;
             errors.add(message);
         }
 
@@ -138,13 +131,10 @@ public with sharing class ProviderIntakeService {
          * fields). A change makes an otherwise unchanged existing Provider UPDATED.
          */
         private void addLaterOutcome(
-            List<ProviderCsvMapping.ValueWarning> laterWarnings,
+            List<RosterIntakeRow.Warning> laterWarnings,
             Map<String, FieldChange> laterChanges
         ) {
-            for (ProviderCsvMapping.ValueWarning warning : laterWarnings) {
-                warnings.add((warning.column == null ? '' : '"' + warning.column + '": ') + warning.message);
-                valueWarnings.add(warning);
-            }
+            warnings.addAll(laterWarnings);
             changesByField.putAll(laterChanges);
             if (outcome == ProviderIntakeService.Outcome.UNCHANGED && !laterChanges.isEmpty()) {
                 outcome = ProviderIntakeService.Outcome.UPDATED;
@@ -197,13 +187,13 @@ public with sharing class ProviderIntakeService {
             }
             when else {
                 for (String error : result.errors) {
-                    row.fail(result.errorCode, error);
+                    row.fail(result.error, error);
                 }
             }
         }
 
-        for (ProviderCsvMapping.ValueWarning warning : result.valueWarnings) {
-            row.warn(warning.code ?? RosterIntakeRunService.CODE_INVALID_VALUE, warning.column, warning.message);
+        for (RosterIntakeRow.Warning warning : result.warnings) {
+            row.warn(warning);
         }
 
         row.putIssueValue(Roster_Intake_Issue__c.Provider__c, result.accountId);
@@ -341,17 +331,17 @@ public with sharing class ProviderIntakeService {
             when MALFORMED_NPI {
                 // The error already reports the invalid NPI; the mapping's warning would repeat it.
                 result.removeWarningsFor(ProviderCsvMapping.NPI_HEADER);
-                result.fail(match.outcome.name(), match.message);
+                result.fail(RosterIntakeIssues.forMatchOutcome(match.outcome), match.message);
             }
             when else {
-                result.fail(match.outcome.name(), match.message);
+                result.fail(RosterIntakeIssues.forMatchOutcome(match.outcome), match.message);
             }
         }
     }
 
     private static void planInsert(ProviderCsvMapping.MappedRow mapped, IngestResult result, PendingSaves saves) {
         if (!mapped.valuesByField.containsKey(Account.LastName)) {
-            result.fail(MISSING_LAST_NAME, 'A valid Last Name is required to create a Provider.');
+            result.fail(RosterIntakeIssues.MISSING_LAST_NAME, 'A valid Last Name is required to create a Provider.');
             return;
         }
 
@@ -427,7 +417,7 @@ public with sharing class ProviderIntakeService {
                 result.removeWarningsFor(String.join(mapping.headers, ' / '));
             }
             result.warn(
-                ADDRESS_NOT_UPDATED,
+                RosterIntakeIssues.ADDRESS_NOT_UPDATED,
                 String.join(new List<String>(problemsByColumn.keySet()), ', '),
                 address.name + ' address not updated: ' + String.join(problemsByColumn.values(), '; ') + '.'
             );
@@ -499,6 +489,6 @@ public with sharing class ProviderIntakeService {
             String fields = error.getFields().isEmpty() ? '' : ' (' + String.join(error.getFields(), ', ') + ')';
             messages.add(error.getMessage() + fields);
         }
-        result.fail(SAVE_ERROR, String.join(messages, '; '));
+        result.fail(RosterIntakeIssues.SAVE_ERROR, String.join(messages, '; '));
     }
 }

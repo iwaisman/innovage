@@ -17,9 +17,6 @@
  */
 public with sharing class HealthcareProviderFieldService {
 
-    /* Warning code; a Roster_Intake_Issue__c.Code__c value. */
-    public static final String HEALTHCARE_PROVIDER_NOT_SAVED = 'HEALTHCARE_PROVIDER_NOT_SAVED';
-
     /* How a change is reported in IngestResult.changesByField: this prefix + the field's API name. */
     public static final String CHANGE_PREFIX = 'HealthcareProvider.';
 
@@ -52,17 +49,17 @@ public with sharing class HealthcareProviderFieldService {
      * What happened to one request's HealthcareProvider fields.
      */
     public class Outcome {
-        public List<ProviderCsvMapping.ValueWarning> warnings { get; private set; }
+        public List<RosterIntakeRow.Warning> warnings { get; private set; }
         /** CHANGE_PREFIX + field API name => old and new value. */
         public Map<String, ProviderIntakeService.FieldChange> changesByLabel { get; private set; }
 
         private Outcome() {
-            warnings = new List<ProviderCsvMapping.ValueWarning>();
+            warnings = new List<RosterIntakeRow.Warning>();
             changesByLabel = new Map<String, ProviderIntakeService.FieldChange>();
         }
 
         private void warn(String message) {
-            warnings.add(new ProviderCsvMapping.ValueWarning(HEALTHCARE_PROVIDER_NOT_SAVED, null, message));
+            warnings.add(new RosterIntakeRow.Warning(RosterIntakeIssues.HEALTHCARE_PROVIDER_NOT_SAVED, null, message));
         }
     }
 

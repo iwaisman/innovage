@@ -25,11 +25,6 @@
  */
 public with sharing class ProviderSpecialtyService {
 
-    /* Warning codes; these are Roster_Intake_Issue__c.Code__c values. */
-    public static final String UNKNOWN_SPECIALTY = 'UNKNOWN_SPECIALTY';
-    public static final String AMBIGUOUS_SPECIALTY = 'AMBIGUOUS_SPECIALTY';
-    public static final String SPECIALTY_NOT_SAVED = 'SPECIALTY_NOT_SAVED';
-
     /* How a change is reported in IngestResult.changesByField. */
     public static final String PRIMARY_SPECIALTY = 'Primary Specialty';
     public static final String SECONDARY_SPECIALTY = 'Secondary Specialty';
@@ -63,17 +58,17 @@ public with sharing class ProviderSpecialtyService {
      * What happened to one request's specialties.
      */
     public class Outcome {
-        public List<ProviderCsvMapping.ValueWarning> warnings { get; private set; }
+        public List<RosterIntakeRow.Warning> warnings { get; private set; }
         /** PRIMARY_SPECIALTY / SECONDARY_SPECIALTY => old and new code. */
         public Map<String, ProviderIntakeService.FieldChange> changesByLabel { get; private set; }
 
         private Outcome() {
-            warnings = new List<ProviderCsvMapping.ValueWarning>();
+            warnings = new List<RosterIntakeRow.Warning>();
             changesByLabel = new Map<String, ProviderIntakeService.FieldChange>();
         }
 
-        private void warn(String code, String column, String message) {
-            warnings.add(new ProviderCsvMapping.ValueWarning(code, column, message));
+        private void warn(RosterIntakeIssues.Issue issue, String column, String message) {
+            warnings.add(new RosterIntakeRow.Warning(issue, column, message));
         }
     }
 
@@ -125,7 +120,7 @@ public with sharing class ProviderSpecialtyService {
         }
         Id healthcareProviderId = healthcareProviderByAccount.get(request.accountId);
         if (healthcareProviderId == null) {
-            outcome.warn(SPECIALTY_NOT_SAVED, null, 'The Provider has no Healthcare Provider record, so its specialties were not saved.');
+            outcome.warn(RosterIntakeIssues.SPECIALTY_NOT_SAVED, null, 'The Provider has no Healthcare Provider record, so its specialties were not saved.');
             return;
         }
 
@@ -154,18 +149,18 @@ public with sharing class ProviderSpecialtyService {
             return null;
         }
         if (code == '') {
-            outcome.warn(UNKNOWN_SPECIALTY, column, 'Ignored: the value has no taxonomy code (expected "<label>' +
+            outcome.warn(RosterIntakeIssues.UNKNOWN_SPECIALTY, column, 'Ignored: the value has no taxonomy code (expected "<label>' +
                 ProviderCsvMapping.SPECIALTY_CODE_SEPARATOR + '<code>").');
             return null;
         }
         List<verifiable__VfiNUCCTaxonomy__c> taxonomies = taxonomiesByCode.get(code.toUpperCase());
         if (taxonomies == null) {
-            outcome.warn(UNKNOWN_SPECIALTY, column, 'Ignored: no NUCC taxonomy has the code "' + code + '".');
+            outcome.warn(RosterIntakeIssues.UNKNOWN_SPECIALTY, column, 'Ignored: no NUCC taxonomy has the code "' + code + '".');
             return null;
         }
         if (taxonomies.size() > 1) {
             // verifiable__TaxonomyCode__c should be unique, but nothing enforces it.
-            outcome.warn(AMBIGUOUS_SPECIALTY, column, 'Ignored: ' + taxonomies.size() +
+            outcome.warn(RosterIntakeIssues.AMBIGUOUS_SPECIALTY, column, 'Ignored: ' + taxonomies.size() +
                 ' NUCC taxonomy records have the code "' + code + '"; it should identify exactly one.');
             return null;
         }
@@ -235,7 +230,7 @@ public with sharing class ProviderSpecialtyService {
                 if (dependency.label != null) {
                     dependency.outcome.changesByLabel.remove(dependency.label);
                 }
-                dependency.outcome.warn(SPECIALTY_NOT_SAVED, HEADERS_BY_CHANGE.get(dependency.label),
+                dependency.outcome.warn(RosterIntakeIssues.SPECIALTY_NOT_SAVED, HEADERS_BY_CHANGE.get(dependency.label),
                     'Specialty ' + record.Taxonomy_Code__c + ' could not be saved: ' + String.join(messages, '; '));
             }
         }

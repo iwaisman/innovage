@@ -40,19 +40,29 @@ public inherited sharing class RosterIntakeRow {
     }
 
     /**
-     * A warning about one row: the row was still processed.
+     * A warning about one row: the row was still processed. Every file type's
+     * warnings use this type, from the moment they are raised.
      */
     public class Warning {
-        /** A Roster_Intake_Issue__c.Code__c value. */
-        public String code { get; private set; }
+        /** The catalog entry; its severity is always Warning. */
+        public RosterIntakeIssues.Issue issue { get; private set; }
         /** The CSV column(s) concerned, or null. */
         public String column { get; private set; }
         public String message { get; private set; }
 
-        public Warning(String code, String column, String message) {
-            this.code = code;
+        /**
+         * @throws IllegalArgumentException if issue is null or not a warning (a programming error)
+         */
+        public Warning(RosterIntakeIssues.Issue issue, String column, String message) {
+            RosterIntakeIssues.requireSeverity(issue, RosterIntakeIssues.SEVERITY_WARNING);
+            this.issue = issue;
             this.column = column;
             this.message = message;
+        }
+
+        /** The Roster_Intake_Issue__c.Code__c value. */
+        public String code {
+            get { return issue.code; }
         }
     }
 
@@ -64,8 +74,8 @@ public inherited sharing class RosterIntakeRow {
     public class Result {
         public Integer rowNumber { get; private set; }
         public Outcome outcome { get; private set; }
-        /** Why the row is an ERROR: a Roster_Intake_Issue__c.Code__c value. */
-        public String errorCode { get; private set; }
+        /** Why the row is an ERROR: the catalog entry; its severity is always Error. */
+        public RosterIntakeIssues.Issue error { get; private set; }
         public List<String> errors { get; private set; }
         public List<Warning> warnings { get; private set; }
         /** Issue field => value, e.g. the Provider matched and the row's key values. */
@@ -86,14 +96,27 @@ public inherited sharing class RosterIntakeRow {
             this.outcome = outcome;
         }
 
-        public void fail(String code, String message) {
+        /** The error's Roster_Intake_Issue__c.Code__c value, or null. */
+        public String errorCode {
+            get { return error?.code; }
+        }
+
+        /**
+         * @throws IllegalArgumentException if issue is null or not an error (a programming error)
+         */
+        public void fail(RosterIntakeIssues.Issue issue, String message) {
+            RosterIntakeIssues.requireSeverity(issue, RosterIntakeIssues.SEVERITY_ERROR);
             outcome = RosterIntakeRow.Outcome.ERROR;
-            errorCode = code;
+            error = issue;
             errors.add(message);
         }
 
-        public void warn(String code, String column, String message) {
-            warnings.add(new Warning(code, column, message));
+        public void warn(RosterIntakeIssues.Issue issue, String column, String message) {
+            warnings.add(new Warning(issue, column, message));
+        }
+
+        public void warn(Warning warning) {
+            warnings.add(warning);
         }
 
         /** Records a value to copy onto the row's Issues; blank values are ignored. */

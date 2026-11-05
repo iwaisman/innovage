@@ -29,17 +29,6 @@ public without sharing class FacilityMatcher {
 
     public static final String FACILITY_RECORD_TYPE = 'Participant_Facility';
 
-    /* Error codes; these are Roster_Intake_Issue__c.Code__c values. */
-    public static final String NO_FACILITY_KEY_VALUES = 'NO_FACILITY_KEY_VALUES';
-    public static final String MALFORMED_FACILITY_UNIQUE_ID = 'MALFORMED_FACILITY_UNIQUE_ID';
-    public static final String MALFORMED_FACILITY_NPI = 'MALFORMED_FACILITY_NPI';
-    public static final String UNKNOWN_FACILITY_UNIQUE_ID = 'UNKNOWN_FACILITY_UNIQUE_ID';
-    public static final String FACILITY_KEY_MISMATCH = 'FACILITY_KEY_MISMATCH';
-    public static final String MULTIPLE_FACILITY_MATCHES = 'MULTIPLE_FACILITY_MATCHES';
-    public static final String FACILITY_NOT_FOUND = 'FACILITY_NOT_FOUND';
-    public static final String FACILITY_NOT_SET_UP = 'FACILITY_NOT_SET_UP';
-    public static final String FACILITY_NOT_IN_ORGANIZATION = 'FACILITY_NOT_IN_ORGANIZATION';
-
     /*
      * The facility NPI is Account.Group_Type_2_NPI__c, not HealthcareFacility.NPI_Type_2__c
      * (confirmed 2026-10-18).
@@ -74,8 +63,8 @@ public without sharing class FacilityMatcher {
      * The outcome of matching one row: the facility, or why there is none.
      */
     public class FacilityMatch {
-        /** Null when the facility was found and is in scope. */
-        public String errorCode { get; private set; }
+        /** Why there is no facility (see RosterIntakeIssues); null when the facility was found and is in scope. */
+        public RosterIntakeIssues.Issue error { get; private set; }
         public String message { get; private set; }
 
         /**
@@ -85,7 +74,7 @@ public without sharing class FacilityMatcher {
         public Account facility { get; private set; }
 
         public Boolean isError() {
-            return errorCode != null;
+            return error != null;
         }
 
         /** The facility's HealthcareFacility; set only when there is no error. */
@@ -93,8 +82,8 @@ public without sharing class FacilityMatcher {
             return isError() ? null : facility.Healthcare_Facility__c;
         }
 
-        private void fail(String errorCode, String message) {
-            this.errorCode = errorCode;
+        private void fail(RosterIntakeIssues.Issue error, String message) {
+            this.error = error;
             this.message = message;
         }
     }
@@ -185,13 +174,13 @@ public without sharing class FacilityMatcher {
             rawAddress = request?.address?.trim();
 
             if (String.isBlank(rawUniqueId) && String.isBlank(rawNpi) && String.isBlank(rawAddress)) {
-                reject(NO_FACILITY_KEY_VALUES, 'No Facility Unique ID, Facility NPI or Facility Shipping Address was provided.');
+                reject(RosterIntakeIssues.NO_FACILITY_KEY_VALUES, 'No Facility Unique ID, Facility NPI or Facility Shipping Address was provided.');
                 return;
             }
             if (String.isNotBlank(rawUniqueId)) {
                 uniqueId = InnovAgeUniqueId.parse(rawUniqueId);
                 if (uniqueId == null || !InnovAgeUniqueId.PARTICIPANT_FACILITY_PREFIX.equals(uniqueId.prefix)) {
-                    reject(MALFORMED_FACILITY_UNIQUE_ID, 'Facility Unique ID "' + rawUniqueId.trim() +
+                    reject(RosterIntakeIssues.MALFORMED_FACILITY_UNIQUE_ID, 'Facility Unique ID "' + rawUniqueId.trim() +
                         '" is not a valid facility ID (expected MF, 9 digits, then 3 letters or digits).');
                     return;
                 }
@@ -199,7 +188,7 @@ public without sharing class FacilityMatcher {
             if (String.isNotBlank(rawNpi)) {
                 npi = ProviderMatcher.normalizeNpi(rawNpi);
                 if (npi == null) {
-                    reject(MALFORMED_FACILITY_NPI, 'Facility NPI "' + rawNpi.trim() +
+                    reject(RosterIntakeIssues.MALFORMED_FACILITY_NPI, 'Facility NPI "' + rawNpi.trim() +
                         '" is not valid (expected 10 digits with a valid check digit).');
                     return;
                 }
@@ -207,9 +196,9 @@ public without sharing class FacilityMatcher {
             address = normalizeAddress(rawAddress);
         }
 
-        private void reject(String code, String message) {
+        private void reject(RosterIntakeIssues.Issue error, String message) {
             result = new FacilityMatch();
-            result.fail(code, message);
+            result.fail(error, message);
         }
     }
 
@@ -279,13 +268,13 @@ public without sharing class FacilityMatcher {
         if (row.uniqueId != null) {
             Account facility = facilitiesByUniqueId.get(row.uniqueId.value);
             if (facility == null) {
-                result.fail(UNKNOWN_FACILITY_UNIQUE_ID, 'No facility has the Unique ID "' + row.uniqueId.value + '".');
+                result.fail(RosterIntakeIssues.UNKNOWN_FACILITY_UNIQUE_ID, 'No facility has the Unique ID "' + row.uniqueId.value + '".');
                 return result;
             }
             result.facility = facility;
             String storedNpi = facility.Group_Type_2_NPI__c?.trim();
             if (row.npi != null && String.isNotBlank(storedNpi) && !row.npi.equals(storedNpi)) {
-                result.fail(FACILITY_KEY_MISMATCH, 'Facility ' + describe(facility) + ' matches the Unique ID but has NPI ' +
+                result.fail(RosterIntakeIssues.FACILITY_KEY_MISMATCH, 'Facility ' + describe(facility) + ' matches the Unique ID but has NPI ' +
                     storedNpi + ', not ' + row.npi + '.');
                 return result;
             }
@@ -305,12 +294,12 @@ public without sharing class FacilityMatcher {
         }
 
         if (candidates == null || candidates.isEmpty()) {
-            result.fail(FACILITY_NOT_FOUND, 'No facility of ' + organization.get() +
+            result.fail(RosterIntakeIssues.FACILITY_NOT_FOUND, 'No facility of ' + organization.get() +
                 ' or its sub-organizations has ' + keyDescription + '.');
             return result;
         }
         if (candidates.size() > 1) {
-            result.fail(MULTIPLE_FACILITY_MATCHES, candidates.size() + ' facilities of ' + organization.get() +
+            result.fail(RosterIntakeIssues.MULTIPLE_FACILITY_MATCHES, candidates.size() + ' facilities of ' + organization.get() +
                 ' or its sub-organizations have ' + keyDescription + ': ' + describeAll(candidates) +
                 '. Give the Facility Unique ID to choose one.');
             return result;
@@ -332,7 +321,7 @@ public without sharing class FacilityMatcher {
     private static void checkAddressAgrees(RowKeys row, FacilityMatch result) {
         String storedAddress = normalizeAddress(result.facility.ShippingStreet);
         if (row.address != null && storedAddress != null && !row.address.equals(storedAddress)) {
-            result.fail(FACILITY_KEY_MISMATCH, 'Facility ' + describe(result.facility) + ' matches the ' +
+            result.fail(RosterIntakeIssues.FACILITY_KEY_MISMATCH, 'Facility ' + describe(result.facility) + ' matches the ' +
                 (row.uniqueId != null ? 'Unique ID' : 'NPI') + ' but its address "' +
                 result.facility.ShippingStreet.trim().split('\\r?\\n')[0].trim() + '" is not "' + row.rawAddress + '".');
         }
@@ -348,17 +337,17 @@ public without sharing class FacilityMatcher {
         // The org's automation sets Healthcare_Facility__c and a validation rule keeps it set;
         // this guards against data loaded around them.
         if (facility.Healthcare_Facility__c == null) {
-            result.fail(FACILITY_NOT_SET_UP, 'Facility ' + describe(facility) + ' has no Healthcare Facility record.');
+            result.fail(RosterIntakeIssues.FACILITY_NOT_SET_UP, 'Facility ' + describe(facility) + ' has no Healthcare Facility record.');
             return;
         }
 
         Id legalOwnerId = facility.Healthcare_Facility__r.Legal_Owner__c;
         if (legalOwnerId == null) {
-            result.fail(FACILITY_NOT_IN_ORGANIZATION, 'Facility ' + describe(facility) +
+            result.fail(RosterIntakeIssues.FACILITY_NOT_IN_ORGANIZATION, 'Facility ' + describe(facility) +
                 ' has no Legal Owner Organization, so it is not part of ' + organization.get() + '.');
         } else if (!scope.contains(legalOwnerId)) {
             Account owner = facility.Healthcare_Facility__r.Legal_Owner__r;
-            result.fail(FACILITY_NOT_IN_ORGANIZATION, 'Facility ' + describe(facility) + ' belongs to Organization ' +
+            result.fail(RosterIntakeIssues.FACILITY_NOT_IN_ORGANIZATION, 'Facility ' + describe(facility) + ' belongs to Organization ' +
                 describe(owner.Name, owner.InnovAge_Unique_ID__c) + ', which is not ' + organization.get() +
                 ' or one of its sub-organizations.');
         }
