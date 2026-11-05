@@ -85,6 +85,9 @@ public inherited sharing class RosterIntakeIssues {
 
     public static final Issue MISSING_LAST_NAME = new Issue('MISSING_LAST_NAME', SEVERITY_ERROR, FileType.PROVIDER,
         'A new Provider would be created without a valid Last Name (ProviderIntakeService).');
+    public static final Issue LAST_NAME_DIFFERS = new Issue('LAST_NAME_DIFFERS', SEVERITY_WARNING, FileType.PROVIDER,
+        'An existing Provider\'s Last Name differs from the file\'s, compared exactly; Last Name is insert-only, '
+        + 'so it is not changed (ProviderIntakeService.warnIfLastNameDiffers).');
     public static final Issue INVALID_VALUE = new Issue('INVALID_VALUE', SEVERITY_WARNING, FileType.PROVIDER,
         'A value fails its column\'s validation (ValueType) or is longer than its field, and is ignored '
         + '(ProviderCsvMapping.mapRow).');
@@ -169,7 +172,7 @@ public inherited sharing class RosterIntakeIssues {
         COLUMN_COUNT,
         NO_KEY_VALUES, MALFORMED_UNIQUE_ID, MALFORMED_NPI, UNKNOWN_UNIQUE_ID, MULTIPLE_MATCHES, KEY_MISMATCH,
         SAVE_ERROR,
-        MISSING_LAST_NAME, INVALID_VALUE, ADDRESS_NOT_UPDATED, HEALTHCARE_PROVIDER_NOT_SAVED,
+        MISSING_LAST_NAME, LAST_NAME_DIFFERS, INVALID_VALUE, ADDRESS_NOT_UPDATED, HEALTHCARE_PROVIDER_NOT_SAVED,
         UNKNOWN_SPECIALTY, AMBIGUOUS_SPECIALTY, SPECIALTY_NOT_SAVED,
         INVALID_TERMINATE_VALUE, INVALID_START_DATE, START_DATE_IGNORED, FACILITY_COLUMNS_IGNORED,
         UNKNOWN_PROVIDER, PROVIDER_NOT_SET_UP,

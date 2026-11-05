@@ -345,6 +345,68 @@ private class ProviderIntakeServiceTest {
         Assert.isNull(inserted.PersonMailingPostalCode, 'Blank ZIP left blank');
     }
 
+    // ─── Last Name on update ───────────────────────────────────────────
+
+    private static ProviderIntakeService.IngestResult ingestLastName(String lastName) {
+        Map<String, String> row = rowWithNpi(ProviderTestDataFactory.NPI_1);
+        row.put(ProviderCsvMapping.LAST_NAME_HEADER, lastName);
+        return ProviderIntakeService.ingest(row);
+    }
+
+    @IsTest
+    static void shouldWarnAndKeepLastName_WhenFileDiffers() {
+        Test.startTest();
+        ProviderIntakeService.IngestResult result = ingestLastName('Renamed');
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIntakeService.Outcome.UNCHANGED, result.outcome, 'Nothing is changed');
+        Assert.areEqual(1, result.warnings.size(), 'One warning: ' + result.warnings);
+        RosterIntakeRow.Warning warning = result.warnings[0];
+        Assert.areEqual(RosterIntakeIssues.LAST_NAME_DIFFERS.code, warning.code, 'Code');
+        Assert.areEqual(ProviderCsvMapping.LAST_NAME_HEADER, warning.column, 'Column');
+        Assert.areEqual(
+            'The Provider\'s Last Name is "' + EXISTING + '", not "Renamed". '
+                + 'Last Name is never changed on an existing Provider, so it was left as it is.',
+            warning.message,
+            'Message'
+        );
+        Assert.areEqual(EXISTING, existing(EXISTING).LastName, 'Last name unchanged');
+    }
+
+    @IsTest
+    static void shouldWarn_WhenLastNameDiffersOnlyInCase() {
+        Test.startTest();
+        ProviderIntakeService.IngestResult result = ingestLastName(EXISTING.toUpperCase());
+        Test.stopTest();
+
+        Assert.areEqual(1, result.warnings.size(), 'Compared exactly: ' + result.warnings);
+        Assert.areEqual(RosterIntakeIssues.LAST_NAME_DIFFERS.code, result.warnings[0].code, 'Code');
+    }
+
+    @IsTest
+    static void shouldNotWarn_WhenLastNameSameOrBlank() {
+        Test.startTest();
+        ProviderIntakeService.IngestResult same = ingestLastName(EXISTING);
+        ProviderIntakeService.IngestResult blank = ingestLastName('  ');
+        Test.stopTest();
+
+        Assert.areEqual(0, same.warnings.size(), 'Same last name: ' + same.warnings);
+        Assert.areEqual(0, blank.warnings.size(), 'Blank last name: ' + blank.warnings);
+    }
+
+    @IsTest
+    static void shouldNotWarnAboutLastName_WhenProviderInserted() {
+        Map<String, String> row = ProviderTestDataFactory.createValidRow();
+        row.put(ProviderCsvMapping.NPI_HEADER, ProviderTestDataFactory.NPI_3);
+
+        Test.startTest();
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row);
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIntakeService.Outcome.INSERTED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(0, result.warnings.size(), 'No warnings: ' + result.warnings);
+    }
+
     @IsTest
     static void shouldNotUpdateInsertOnlyFields() {
         Account before = existing(EXISTING);

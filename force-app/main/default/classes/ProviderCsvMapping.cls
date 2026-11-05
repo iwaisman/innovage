@@ -19,6 +19,7 @@ public inherited sharing class ProviderCsvMapping {
 
     public static final String UNIQUE_ID_HEADER = 'Provider Unique ID';
     public static final String NPI_HEADER = 'Individual NPI';
+    public static final String LAST_NAME_HEADER = 'Last Name';
 
     /* Specialty columns: not Account fields; ProviderSpecialtyService links them (see specialtyCode). */
     public static final String PRIMARY_SPECIALTY_HEADER = 'Primary Provider Specialty';
@@ -160,7 +161,7 @@ public inherited sharing class ProviderCsvMapping {
         new FieldMapping('Salutation', Account.Salutation, ValueType.PICKLIST, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('First Name', Account.FirstName, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Middle Name', Account.MiddleName, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
-        new FieldMapping('Last Name', Account.LastName, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
+        new FieldMapping(LAST_NAME_HEADER, Account.LastName, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Suffix (MD, DO, NP, RN etc)', Account.Suffix, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Date of Birth', Account.PersonBirthdate, ValueType.PAST_DATE, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Social Security Number', Account.Social_Security_Number_Provider__pc, ValueType.SSN, UpdatePolicy.INSERT_ONLY),

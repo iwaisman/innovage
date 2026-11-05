@@ -41,7 +41,7 @@ UPDATES
 - Each field has a role.
   Update: overwritten when the file's value differs, compared exactly (Phone, Fax, Email, Gender Identification, Pronouns, Primary and Secondary Provider Language, Initial and Last Credentialing Date, Provider Attests to Providing Gender Affirming Care?, and the mailing and billing addresses, see ADDRESSES).
   Fill if blank (NPI only): written only when the stored value is blank. 
-  Insert only: written when the Provider is created, never changed afterwards.
+  Insert only: written when the Provider is created, never changed afterwards. Last Name is also compared on an existing Provider: if the file's differs from the stored one (compared exactly), it is still not changed, and the row gets warning LAST_NAME_DIFFERS naming both names.
 
 ADDRESSES
 

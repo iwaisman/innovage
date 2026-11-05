@@ -148,7 +148,7 @@ public with sharing class ProviderIntakeService {
      */
     public class Processor implements RosterRowProcessor {
         public List<String> requiredHeaders() {
-            return new List<String>{ ProviderCsvMapping.UNIQUE_ID_HEADER, ProviderCsvMapping.NPI_HEADER, 'Last Name' };
+            return new List<String>{ ProviderCsvMapping.UNIQUE_ID_HEADER, ProviderCsvMapping.NPI_HEADER, ProviderCsvMapping.LAST_NAME_HEADER };
         }
 
         public void prepare(RosterIntakeRow.Context context) {
@@ -244,10 +244,10 @@ public with sharing class ProviderIntakeService {
         for (IngestResult result : results) {
             requests.add(new ProviderMatcher.MatchRequest(result.uniqueId, result.npi));
         }
-        List<AccountMatchResult> matches = ProviderMatcher.matchAll(
-            requests,
-            ProviderCsvMapping.getUpdatableFieldNames()
-        );
+        // LastName is never updated, but is compared (warnIfLastNameDiffers).
+        Set<String> fieldsToCompare = ProviderCsvMapping.getUpdatableFieldNames();
+        fieldsToCompare.add('LastName');
+        List<AccountMatchResult> matches = ProviderMatcher.matchAll(requests, fieldsToCompare);
 
         PendingSaves saves = new PendingSaves();
         for (Integer i = 0; i < results.size(); i++) {
@@ -360,6 +360,7 @@ public with sharing class ProviderIntakeService {
         PendingSaves saves
     ) {
         result.accountId = existing.Id;
+        warnIfLastNameDiffers(existing, mapped, result);
         Set<Schema.SObjectField> rejectedFields = rejectAddresses(existing, mapped, result);
 
         Map<Schema.SObjectField, Object> changedValuesByField = new Map<Schema.SObjectField, Object>();
@@ -388,6 +389,24 @@ public with sharing class ProviderIntakeService {
         }
 
         saves.addUpdate(existing.Id, changedValuesByField, result);
+    }
+
+    /*
+     * Last Name is insert-only, so an existing Provider's is never changed; a
+     * different one in the file is reported so someone can check it. Compared
+     * exactly, case and spaces included. A blank or invalid Last Name is not compared.
+     */
+    private static void warnIfLastNameDiffers(Account existing, ProviderCsvMapping.MappedRow mapped, IngestResult result) {
+        String incoming = (String) mapped.valuesByField.get(Account.LastName);
+        if (incoming == null || incoming.equals(existing.LastName)) {
+            return;
+        }
+        result.warn(
+            RosterIntakeIssues.LAST_NAME_DIFFERS,
+            ProviderCsvMapping.LAST_NAME_HEADER,
+            'The Provider\'s Last Name is "' + existing.LastName + '", not "' + incoming
+                + '". Last Name is never changed on an existing Provider, so it was left as it is.'
+        );
     }
 
     /*
