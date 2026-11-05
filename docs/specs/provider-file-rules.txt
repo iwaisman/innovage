@@ -39,7 +39,7 @@ UPDATES
   A blank cell leaves the stored value as it is.
 
 - Each field has a role.
-  Update: overwritten when the file's value differs (Phone, Email, Gender Identification, Pronouns, Primary and Secondary Provider Language). 
+  Update: overwritten when the file's value differs (Phone, Email, Gender Identification, Pronouns, Primary and Secondary Provider Language, Initial and Last Credentialing Date, Provider Attests to Providing Gender Affirming Care?).
   Fill if blank (NPI only): written only when the stored value is blank. 
   Insert only: written when the Provider is created, never changed afterwards.
 
@@ -58,6 +58,16 @@ SPECIALTIES
 
 - A specialty change counts as an update.
   An existing Provider whose only change is a specialty is reported as Updated, with the change listed like a field change.
+
+HEALTHCARE PROVIDER
+
+- Gender affirming care is stored on the Provider's Healthcare Provider.
+  Provider Attests to Providing Gender Affirming Care? (Yes or No) is written to the Healthcare Provider record after the Provider saves. A change counts as an update, as for specialties. If the Provider has no Healthcare Provider, or it cannot be saved, the value is skipped with warning HEALTHCARE_PROVIDER_NOT_SAVED; the Provider is still saved.
+
+CREDENTIALING
+
+- Setting Initial Credentialing Date starts the Verifiable credentialing flows.
+  Both credentialing dates must be in the past (today is rejected).
 
 OUTCOMES
 

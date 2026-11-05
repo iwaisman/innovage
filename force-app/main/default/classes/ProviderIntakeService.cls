@@ -6,6 +6,9 @@
  *     NO_MATCH      -> insert a Provider from every valid mapped value
  *     anything else -> ERROR (returned to the caller)
  *
+ * Then, for every saved Provider, HealthcareProviderFieldService writes the
+ * HealthcareProvider fields and ProviderSpecialtyService links the specialties.
+ *
  * ingestAll() is the bulk entry point: one matching query and at most one insert
  * and one update for the whole list. ingest() is the single-row form of it.
  *
@@ -90,8 +93,9 @@ public with sharing class ProviderIntakeService {
         public List<ProviderCsvMapping.ValueWarning> valueWarnings { get; private set; }
         public Map<String, FieldChange> changesByField { get; private set; }
 
-        /* This row's specialties, while applySpecialties runs. */
+        /* This row's specialties and HealthcareProvider fields, while they are applied. */
         private ProviderSpecialtyService.Request specialties;
+        private HealthcareProviderFieldService.Request healthcareProviderFields;
 
         private IngestResult(Integer rowNumber, ProviderCsvMapping.MappedRow mapped) {
             this.rowNumber = rowNumber;
@@ -122,14 +126,20 @@ public with sharing class ProviderIntakeService {
             errors.add(message);
         }
 
-        /* A specialty change makes an otherwise unchanged existing Provider UPDATED. */
-        private void addSpecialtyOutcome(ProviderSpecialtyService.Outcome specialtyOutcome) {
-            for (ProviderCsvMapping.ValueWarning warning : specialtyOutcome.warnings) {
+        /*
+         * Adds what happened after the Provider saved (specialties, HealthcareProvider
+         * fields). A change makes an otherwise unchanged existing Provider UPDATED.
+         */
+        private void addLaterOutcome(
+            List<ProviderCsvMapping.ValueWarning> laterWarnings,
+            Map<String, FieldChange> laterChanges
+        ) {
+            for (ProviderCsvMapping.ValueWarning warning : laterWarnings) {
                 warnings.add((warning.column == null ? '' : '"' + warning.column + '": ') + warning.message);
                 valueWarnings.add(warning);
             }
-            changesByField.putAll(specialtyOutcome.changesByLabel);
-            if (outcome == ProviderIntakeService.Outcome.UNCHANGED && !specialtyOutcome.changesByLabel.isEmpty()) {
+            changesByField.putAll(laterChanges);
+            if (outcome == ProviderIntakeService.Outcome.UNCHANGED && !laterChanges.isEmpty()) {
                 outcome = ProviderIntakeService.Outcome.UPDATED;
             }
         }
@@ -248,8 +258,36 @@ public with sharing class ProviderIntakeService {
         }
 
         saves.execute();
+        applyHealthcareProviderFields(results, mappedRows);
         applySpecialties(results, mappedRows);
         return results;
+    }
+
+    /*
+     * Writes the rows' HealthcareProvider fields (see HealthcareProviderFieldService).
+     * Runs after the Provider saves, so new Providers already have their
+     * HealthcareProvider; rows that errored are skipped.
+     */
+    private static void applyHealthcareProviderFields(
+        List<IngestResult> results,
+        List<ProviderCsvMapping.MappedRow> mappedRows
+    ) {
+        List<HealthcareProviderFieldService.Request> requests = new List<HealthcareProviderFieldService.Request>();
+        for (Integer i = 0; i < results.size(); i++) {
+            IngestResult result = results[i];
+            result.healthcareProviderFields = new HealthcareProviderFieldService.Request(
+                result.outcome == Outcome.ERROR ? null : result.accountId,
+                result.outcome == Outcome.INSERTED,
+                mappedRows[i].healthcareProviderValuesByField
+            );
+            requests.add(result.healthcareProviderFields);
+        }
+
+        HealthcareProviderFieldService.apply(requests);
+        for (IngestResult result : results) {
+            HealthcareProviderFieldService.Outcome fieldOutcome = result.healthcareProviderFields.outcome;
+            result.addLaterOutcome(fieldOutcome.warnings, fieldOutcome.changesByLabel);
+        }
     }
 
     /*
@@ -271,7 +309,7 @@ public with sharing class ProviderIntakeService {
 
         ProviderSpecialtyService.apply(requests);
         for (IngestResult result : results) {
-            result.addSpecialtyOutcome(result.specialties.outcome);
+            result.addLaterOutcome(result.specialties.outcome.warnings, result.specialties.outcome.changesByLabel);
         }
     }
 
@@ -335,8 +373,7 @@ public with sharing class ProviderIntakeService {
             Object storedValue = existing.get(mapping.field);
             Object incomingValue = mapped.valuesByField.get(mapping.field);
 
-            Boolean storedIsBlank = storedValue == null || String.isBlank(String.valueOf(storedValue));
-            if (mapping.updatePolicy == ProviderCsvMapping.UpdatePolicy.FILL_IF_BLANK && !storedIsBlank) {
+            if (!ProviderCsvMapping.mayWrite(mapping, storedValue, false)) {
                 continue;
             }
             if (ProviderCsvMapping.isSameValue(mapping.valueType, storedValue, incomingValue)) {

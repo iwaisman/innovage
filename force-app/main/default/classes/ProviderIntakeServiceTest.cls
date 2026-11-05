@@ -92,6 +92,31 @@ private class ProviderIntakeServiceTest {
     }
 
     @IsTest
+    static void shouldUpdateCredentialingDates_WhenMatchedByNpi() {
+        Account before = existing(EXISTING);
+        Map<String, String> row = rowWithNpi(ProviderTestDataFactory.NPI_1);
+        row.put('Initial Credentialing Date', '03/01/2020');
+        row.put('Last Credentialing Date', '03/01/2023');
+
+        Test.startTest();
+        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row);
+        Test.stopTest();
+
+        Assert.areEqual(ProviderIntakeService.Outcome.UPDATED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(
+            new Set<String>{ 'Initial_Credentialing_Approval__pc', 'Last_Credentialing_Approval_Date__pc' },
+            result.changesByField.keySet(),
+            'Both dates changed'
+        );
+
+        Account after = [
+            SELECT Initial_Credentialing_Approval__pc, Last_Credentialing_Approval_Date__pc FROM Account WHERE Id = :before.Id
+        ];
+        Assert.areEqual(Date.newInstance(2020, 3, 1), after.Initial_Credentialing_Approval__pc, 'Initial date saved');
+        Assert.areEqual(Date.newInstance(2023, 3, 1), after.Last_Credentialing_Approval_Date__pc, 'Last date saved');
+    }
+
+    @IsTest
     static void shouldReturnUnchanged_WhenValuesDifferOnlyInFormat() {
         Account before = existing(EXISTING);
         Map<String, String> row = rowWithNpi(ProviderTestDataFactory.NPI_1);

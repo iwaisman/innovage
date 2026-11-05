@@ -1,6 +1,8 @@
 /**
  * Maps a Provider roster CSV row (header => value, as produced by
- * CsvParser.parseWithHeaders) onto Provider person Account fields.
+ * CsvParser.parseWithHeaders) onto Provider person Account fields (MAPPINGS)
+ * and fields of the Provider's HealthcareProvider (HEALTHCARE_PROVIDER_MAPPINGS,
+ * written by HealthcareProviderFieldService).
  *
  * Each mapping declares how the value is validated and normalized, and how it
  * may be applied to an existing Provider:
@@ -108,8 +110,11 @@ public inherited sharing class ProviderCsvMapping {
         public String primarySpecialtyCode { get; private set; }
         public String secondarySpecialtyCode { get; private set; }
 
-        /** Valid, normalized, non-blank values. */
+        /** Valid, normalized, non-blank Account values. */
         public Map<Schema.SObjectField, Object> valuesByField { get; private set; }
+
+        /** Valid, normalized, non-blank HealthcareProvider values. */
+        public Map<Schema.SObjectField, Object> healthcareProviderValuesByField { get; private set; }
 
         /** One message per dropped value, naming its header(s). */
         public List<String> warnings { get; private set; }
@@ -119,6 +124,7 @@ public inherited sharing class ProviderCsvMapping {
 
         private MappedRow() {
             valuesByField = new Map<Schema.SObjectField, Object>();
+            healthcareProviderValuesByField = new Map<Schema.SObjectField, Object>();
             warnings = new List<String>();
             valueWarnings = new List<ValueWarning>();
         }
@@ -177,9 +183,30 @@ public inherited sharing class ProviderCsvMapping {
         new FieldMapping('CAQH ID', Account.CAQH_ID__pc, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Medicare ID', Account.Medicare_ID__c, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
         new FieldMapping('Medicaid ID', Account.Medicaid_ID__pc, ValueType.TEXT, UpdatePolicy.INSERT_ONLY),
-        new FieldMapping('Medicaid ID State', Account.Medicaid_ID_State__c, ValueType.STATE, UpdatePolicy.INSERT_ONLY)
-        // 'Initial Credentialing Date' / 'Last Credentialing Date' are deliberately unmapped until the
-        // stakeholders decide: setting Initial_Credentialing_Approval__pc starts Verifiable credentialing flows.
+        new FieldMapping('Medicaid ID State', Account.Medicaid_ID_State__c, ValueType.STATE, UpdatePolicy.INSERT_ONLY),
+
+        // Setting Initial_Credentialing_Approval__pc starts the Verifiable credentialing flows
+        // (Auto Verify NPI and Sanctions; Credentialing Event Creation).
+        new FieldMapping(
+            'Initial Credentialing Date', Account.Initial_Credentialing_Approval__pc, ValueType.PAST_DATE, UpdatePolicy.OVERWRITE
+        ),
+        new FieldMapping(
+            'Last Credentialing Date', Account.Last_Credentialing_Approval_Date__pc, ValueType.PAST_DATE, UpdatePolicy.OVERWRITE
+        )
+    };
+
+    /**
+     * Fields of the Provider's HealthcareProvider (found through Account.Healthcare_Provider__c).
+     * Each mapping's UpdatePolicy applies as it does for Account fields.
+     */
+    public static final List<FieldMapping> HEALTHCARE_PROVIDER_MAPPINGS = new List<FieldMapping>{
+        // A Yes / No picklist.
+        new FieldMapping(
+            'Provider Attests to Providing Gender Affirming Care?',
+            HealthcareProvider.Offers_Offered_Gender_Affirming_Services__c,
+            ValueType.PICKLIST,
+            UpdatePolicy.OVERWRITE
+        )
     };
 
     private static final Map<ValueType, String> INVALID_REASONS_BY_TYPE = new Map<ValueType, String>{
@@ -231,7 +258,21 @@ public inherited sharing class ProviderCsvMapping {
         String secondary = specialtyCode(row.get(SECONDARY_SPECIALTY_HEADER));
         mapped.secondarySpecialtyCode = secondary == mapped.primarySpecialtyCode ? null : secondary;
 
-        for (FieldMapping mapping : MAPPINGS) {
+        mapValues(row, MAPPINGS, mapped, mapped.valuesByField);
+        mapValues(row, HEALTHCARE_PROVIDER_MAPPINGS, mapped, mapped.healthcareProviderValuesByField);
+        return mapped;
+    }
+
+    /*
+     * Puts each mapping's valid value into valuesByField; warns about invalid ones.
+     */
+    private static void mapValues(
+        Map<String, String> row,
+        List<FieldMapping> mappings,
+        MappedRow mapped,
+        Map<Schema.SObjectField, Object> valuesByField
+    ) {
+        for (FieldMapping mapping : mappings) {
             String rawValue = joinedValue(row, mapping.headers);
             if (String.isBlank(rawValue)) {
                 continue;
@@ -249,10 +290,30 @@ public inherited sharing class ProviderCsvMapping {
                 continue;
             }
 
-            mapped.valuesByField.put(mapping.field, value);
+            valuesByField.put(mapping.field, value);
         }
+    }
 
-        return mapped;
+    /**
+     * Whether a mapping's update policy lets it write over a stored value.
+     *
+     * @param mapping The mapping
+     * @param storedValue The value currently on the record
+     * @param isNewProvider true when the row created the Provider
+     * @return false for INSERT_ONLY on an existing Provider, and for FILL_IF_BLANK over a non-blank value
+     */
+    public static Boolean mayWrite(FieldMapping mapping, Object storedValue, Boolean isNewProvider) {
+        switch on mapping.updatePolicy {
+            when INSERT_ONLY {
+                return isNewProvider;
+            }
+            when FILL_IF_BLANK {
+                return storedValue == null || String.isBlank(String.valueOf(storedValue));
+            }
+            when else {
+                return true;
+            }
+        }
     }
 
     /**

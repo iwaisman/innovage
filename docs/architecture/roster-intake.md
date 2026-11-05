@@ -70,8 +70,9 @@ row processor and the Run's context.
 | Class | Responsibility |
 |---|---|
 | `ProviderIntakeService` | Row logic. `ingestAll(rows)`: maps the rows, matches them against existing Providers, and performs the inserts and updates. `ingest(row)` is the single-row form. Its `Processor` adapts it to `RosterRowProcessor`. |
-| `ProviderCsvMapping` | Maps CSV headers to Account fields. Validates and normalizes values (phone, email, dates, SSN, NPI, state, ZIP, picklists, and multi-select picklists split on `MULTI_PICKLIST_SEPARATOR`, currently `;`) and defines each field's update policy (OVERWRITE, FILL_IF_BLANK, INSERT_ONLY). Invalid values are dropped as warnings. `parseDate` is shared with the relationships file. The full column list is in [docs/specs/provider-file-mapping.csv](../specs/provider-file-mapping.csv). |
+| `ProviderCsvMapping` | Maps CSV headers to Account fields (and, in `HEALTHCARE_PROVIDER_MAPPINGS`, HealthcareProvider fields). Validates and normalizes values (phone, email, dates, SSN, NPI, state, ZIP, picklists, and multi-select picklists split on `MULTI_PICKLIST_SEPARATOR`, currently `;`) and defines each field's update policy (OVERWRITE, FILL_IF_BLANK, INSERT_ONLY). Invalid values are dropped as warnings. `parseDate` is shared with the relationships file. The full column list is in [docs/specs/provider-file-mapping.csv](../specs/provider-file-mapping.csv). |
 | `ProviderSpecialtyService` | `apply(requests)`: after the Provider saves, links each Provider to the NUCC specialties in its row (Primary / Secondary Provider Specialty) through HealthcareProviderTaxonomy records. Three queries and at most one update and one insert per slice. |
+| `HealthcareProviderFieldService` | `apply(requests)`: after the Provider saves, writes the row's HealthcareProvider columns (`ProviderCsvMapping.HEALTHCARE_PROVIDER_MAPPINGS`) to the Provider's HealthcareProvider. Two queries and at most one update per slice. |
 | `ProviderMatcher` | `matchAll(requests)`: finds the existing Provider for each row by Unique ID and/or NPI, with **one** query for all rows. Used by both file types. |
 | `AccountMatchResult` | The outcome of matching one row: UNIQUE_MATCH, NO_MATCH, or an error outcome. |
 | `InnovAgeUniqueId` | Parses and validates an InnovAge Unique ID (prefix + 9-digit auto-number + 3-character Id suffix; `P` for Providers, `MF` for facilities). |
@@ -269,7 +270,9 @@ For a list of rows it:
 4. **Saves** with at most one partial-success `Database.insert` and one
    `Database.update`, in system mode. Each save result is mapped back to the row
    that produced it; a failed save becomes a SAVE_ERROR on that row.
-5. **Links specialties** with `ProviderSpecialtyService` (section 6.1) for every
+5. **Writes HealthcareProvider fields** with `HealthcareProviderFieldService`
+   (section 6.2) for every row whose Provider was saved.
+6. **Links specialties** with `ProviderSpecialtyService` (section 6.1) for every
    row whose Provider was saved.
 
 ### 6.1 Specialties
@@ -307,6 +310,26 @@ also stored in `Taxonomy_Code__c`.
 
 Verifiable also has its own Provider specialty object,
 `verifiable__VfiProviderSpecialty__c`, which intake does not use.
+
+### 6.2 HealthcareProvider fields
+
+Columns in `ProviderCsvMapping.HEALTHCARE_PROVIDER_MAPPINGS` are fields of the
+Provider's `HealthcareProvider` (found through `Account.Healthcare_Provider__c`),
+not of the Account. Today that is one column: Provider Attests to Providing
+Gender Affirming Care? → `Offers_Offered_Gender_Affirming_Services__c` (a Yes /
+No picklist, OVERWRITE).
+
+- They are mapped and validated like Account columns, into
+  `MappedRow.healthcareProviderValuesByField`.
+- After the Provider saves, `HealthcareProviderFieldService.apply` writes them:
+  two queries and at most one update per slice, in system mode. Update policies
+  apply as for Account fields (`ProviderCsvMapping.mayWrite`).
+- **Rows in one slice** are applied in order: each row is compared with the
+  value left by the rows before it, and the last row wins.
+- **Outcome:** a change makes an otherwise unchanged existing Provider UPDATED;
+  it is reported in `changesByField` as `HealthcareProvider.<field>`.
+- **No HealthcareProvider, or a failed save:** warning
+  HEALTHCARE_PROVIDER_NOT_SAVED. The Provider is saved either way.
 
 ### Duplicate rows
 

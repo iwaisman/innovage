@@ -86,6 +86,70 @@ private class ProviderCsvMappingTest {
     }
 
     @IsTest
+    static void shouldMapGenderAffirmingCare_ToHealthcareProvider() {
+        Test.startTest();
+        ProviderCsvMapping.MappedRow mapped = mapWith('Provider Attests to Providing Gender Affirming Care?', 'yes');
+        Test.stopTest();
+
+        Assert.areEqual(
+            'Yes',
+            mapped.healthcareProviderValuesByField.get(HealthcareProvider.Offers_Offered_Gender_Affirming_Services__c),
+            'Picklist value takes the defined casing'
+        );
+        Assert.isFalse(
+            mapped.valuesByField.containsKey(HealthcareProvider.Offers_Offered_Gender_Affirming_Services__c),
+            'Not an Account value'
+        );
+    }
+
+    @IsTest
+    static void shouldDropGenderAffirmingCare_WhenNotYesOrNo() {
+        ProviderCsvMapping.MappedRow mapped = mapWith('Provider Attests to Providing Gender Affirming Care?', 'Maybe');
+
+        Assert.isTrue(mapped.healthcareProviderValuesByField.isEmpty(), 'Dropped');
+        Assert.areEqual(1, mapped.warnings.size(), 'One warning: ' + mapped.warnings);
+    }
+
+    @IsTest
+    static void shouldMapCredentialingDates() {
+        Map<String, String> row = ProviderTestDataFactory.createValidRow();
+        row.put('Initial Credentialing Date', '3/1/2020');
+        row.put('Last Credentialing Date', '03/01/2023');
+
+        Test.startTest();
+        ProviderCsvMapping.MappedRow mapped = ProviderCsvMapping.mapRow(row);
+        Test.stopTest();
+
+        Assert.areEqual(Date.newInstance(2020, 3, 1), mapped.valuesByField.get(Account.Initial_Credentialing_Approval__pc), 'Initial date');
+        Assert.areEqual(Date.newInstance(2023, 3, 1), mapped.valuesByField.get(Account.Last_Credentialing_Approval_Date__pc), 'Last date');
+    }
+
+    @IsTest
+    static void shouldDropCredentialingDate_WhenInFuture() {
+        String nextYear = '01/01/' + (Date.today().year() + 1);
+        assertDropped('Last Credentialing Date', nextYear, Account.Last_Credentialing_Approval_Date__pc);
+    }
+
+    @IsTest
+    static void shouldApplyUpdatePolicies_InMayWrite() {
+        ProviderCsvMapping.FieldMapping overwrite = new ProviderCsvMapping.FieldMapping(
+            'A', Account.Phone, ProviderCsvMapping.ValueType.PHONE, ProviderCsvMapping.UpdatePolicy.OVERWRITE
+        );
+        ProviderCsvMapping.FieldMapping fillIfBlank = new ProviderCsvMapping.FieldMapping(
+            'B', Account.NPI__c, ProviderCsvMapping.ValueType.NPI, ProviderCsvMapping.UpdatePolicy.FILL_IF_BLANK
+        );
+        ProviderCsvMapping.FieldMapping insertOnly = new ProviderCsvMapping.FieldMapping(
+            'C', Account.Fax, ProviderCsvMapping.ValueType.PHONE, ProviderCsvMapping.UpdatePolicy.INSERT_ONLY
+        );
+
+        Assert.isTrue(ProviderCsvMapping.mayWrite(overwrite, 'x', false), 'OVERWRITE writes over a value');
+        Assert.isTrue(ProviderCsvMapping.mayWrite(fillIfBlank, ' ', false), 'FILL_IF_BLANK writes over a blank');
+        Assert.isFalse(ProviderCsvMapping.mayWrite(fillIfBlank, 'x', false), 'FILL_IF_BLANK keeps a value');
+        Assert.isTrue(ProviderCsvMapping.mayWrite(insertOnly, null, true), 'INSERT_ONLY writes on a new Provider');
+        Assert.isFalse(ProviderCsvMapping.mayWrite(insertOnly, null, false), 'INSERT_ONLY never changes an existing one');
+    }
+
+    @IsTest
     static void shouldMapValidNpi() {
         Test.startTest();
         ProviderCsvMapping.MappedRow mapped = mapWith(ProviderCsvMapping.NPI_HEADER, ProviderTestDataFactory.NPI_1);
@@ -235,9 +299,12 @@ private class ProviderCsvMappingTest {
         Test.stopTest();
 
         Assert.areEqual(
-            new Set<String>{ 'NPI__c', 'Phone', 'PersonEmail', 'PersonGender', 'PersonPronouns', 'Primary_Language__c', 'Secondary_Languages__c' },
+            new Set<String>{
+                'NPI__c', 'Phone', 'PersonEmail', 'PersonGender', 'PersonPronouns', 'Primary_Language__c', 'Secondary_Languages__c',
+                'Initial_Credentialing_Approval__pc', 'Last_Credentialing_Approval_Date__pc'
+            },
             fieldNames,
-            'Only NPI, Phone, Email, gender, pronouns and languages can change'
+            'Only NPI, Phone, Email, gender, pronouns, languages and credentialing dates can change'
         );
     }
 
