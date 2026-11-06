@@ -179,6 +179,11 @@
                 <default>false</default>
                 <label>LAST_NAME_DIFFERS</label>
             </value>
+            <value>
+                <fullName>RELATIONSHIP_COLUMNS_IGNORED</fullName>
+                <default>false</default>
+                <label>RELATIONSHIP_COLUMNS_IGNORED</label>
+            </value>
         </valueSetDefinition>
     </valueSet>
 </CustomField>

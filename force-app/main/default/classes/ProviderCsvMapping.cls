@@ -40,7 +40,8 @@ public inherited sharing class ProviderCsvMapping {
      */
     public static final String MULTI_PICKLIST_SEPARATOR = ';';
 
-    public enum ValueType { TEXT, PICKLIST, MULTI_PICKLIST, PHONE, EMAIL, PAST_DATE, SSN, NPI, STATE, ZIP }
+    /* YES_NO is for checkbox fields: "Yes" or "No" in any case, stored as true or false. */
+    public enum ValueType { TEXT, PICKLIST, MULTI_PICKLIST, PHONE, EMAIL, PAST_DATE, SSN, NPI, STATE, ZIP, YES_NO }
 
     public enum UpdatePolicy { OVERWRITE, FILL_IF_BLANK, INSERT_ONLY }
 
@@ -290,13 +291,15 @@ public inherited sharing class ProviderCsvMapping {
         ValueType.SSN => 'not a valid Social Security Number',
         ValueType.NPI => 'not a 10-digit NPI with a valid check digit',
         ValueType.STATE => 'not a 2-letter US state code',
-        ValueType.ZIP => 'not a valid ZIP code (12345 or 12345-6789)'
+        ValueType.ZIP => 'not a valid ZIP code (12345 or 12345-6789)',
+        ValueType.YES_NO => 'not Yes or No'
     };
 
     private static final Pattern PHONE_CHARACTERS = Pattern.compile('^[0-9()+.\\-\\s]+$');
     private static final Pattern EMAIL_FORMAT = Pattern.compile('^[A-Za-z0-9._%+\'-]+@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}$');
     private static final Pattern DATE_FORMAT = Pattern.compile('^(\\d{1,2})/(\\d{1,2})/(\\d{4})$');
     private static final Pattern SSN_FORMAT = Pattern.compile('^(\\d{3})-?(\\d{2})-?(\\d{4})$');
+    private static final Map<String, Boolean> YES_NO_VALUES = new Map<String, Boolean>{ 'yes' => true, 'no' => false };
     private static final Pattern ZIP_FORMAT = Pattern.compile('^\\d{5}(-\\d{4})?$');
 
     private static final Set<String> US_STATE_CODES = new Set<String>{
@@ -355,20 +358,50 @@ public inherited sharing class ProviderCsvMapping {
                 continue;
             }
 
-            Object value = normalize(mapping, rawValue);
-            if (value == null) {
-                mapped.drop(mapping, INVALID_REASONS_BY_TYPE.get(mapping.valueType));
+            CheckedValue checked = check(mapping, rawValue);
+            if (checked.invalidReason != null) {
+                mapped.drop(mapping, checked.invalidReason);
                 continue;
             }
-
-            Integer maxLength = mapping.field.getDescribe().getLength();
-            if (value instanceof String && maxLength > 0 && ((String) value).length() > maxLength) {
-                mapped.drop(mapping, 'longer than ' + maxLength + ' characters');
-                continue;
-            }
-
-            valuesByField.put(mapping.field, value);
+            valuesByField.put(mapping.field, checked.value);
         }
+    }
+
+    /**
+     * A non-blank value checked against its mapping: the normalized value, or why it is invalid.
+     */
+    public class CheckedValue {
+        /** The normalized value; null when invalid. */
+        public Object value { get; private set; }
+        /** e.g. "not a valid ZIP code (12345 or 12345-6789)"; null when valid. Never contains the value. */
+        public String invalidReason { get; private set; }
+
+        private CheckedValue(Object value, String invalidReason) {
+            this.value = value;
+            this.invalidReason = invalidReason;
+        }
+    }
+
+    /**
+     * Validates and normalizes one value for its mapping's ValueType, and checks
+     * it fits the field. Shared by every file type, so a ValueType means the same
+     * in each.
+     *
+     * @param mapping The mapping
+     * @param rawValue A non-blank value, trimmed
+     * @return The normalized value, or the reason it is invalid
+     */
+    public static CheckedValue check(FieldMapping mapping, String rawValue) {
+        Object value = normalize(mapping, rawValue);
+        if (value == null) {
+            return new CheckedValue(null, INVALID_REASONS_BY_TYPE.get(mapping.valueType));
+        }
+
+        Integer maxLength = mapping.field.getDescribe().getLength();
+        if (value instanceof String && maxLength > 0 && ((String) value).length() > maxLength) {
+            return new CheckedValue(null, 'longer than ' + maxLength + ' characters');
+        }
+        return new CheckedValue(value, null);
     }
 
     /**
@@ -513,6 +546,9 @@ public inherited sharing class ProviderCsvMapping {
             }
             when ZIP {
                 return ZIP_FORMAT.matcher(value).matches() ? value : null;
+            }
+            when YES_NO {
+                return YES_NO_VALUES.get(value.toLowerCase());
             }
             when else {
                 return value;

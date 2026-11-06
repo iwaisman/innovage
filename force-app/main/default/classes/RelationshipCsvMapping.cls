@@ -1,6 +1,7 @@
 /**
  * Reads a relationships-file row (header => value): the Provider keys, the
- * facility keys, the start date and what to do (Terminate column).
+ * facility keys, the start date, what to do (Terminate column), and the
+ * relationship's own fields (RELATIONSHIP_MAPPINGS).
  *
  * Key values are passed on as supplied (trimmed); the matchers report
  * malformed keys themselves. A malformed start date is reported
@@ -17,6 +18,11 @@ public inherited sharing class RelationshipCsvMapping {
     public static final String START_DATE_HEADER = 'Relationship Start Date';
     public static final String TERMINATE_HEADER = 'Terminate';
 
+    /* Optional columns: see RELATIONSHIP_MAPPINGS. */
+    public static final String LIMITATIONS_HEADER = 'Limitations';
+    public static final String SCHEDULING_URL_HEADER = 'Practitioner Scheduling URL';
+    public static final String TELEMEDICINE_HEADER = 'Telemedicine Capability';
+
     /**
      * Every column is required in the header, although any value may be blank,
      * so a misspelt header fails the file instead of silently reading as blank.
@@ -29,6 +35,32 @@ public inherited sharing class RelationshipCsvMapping {
         FACILITY_ADDRESS_HEADER,
         START_DATE_HEADER,
         TERMINATE_HEADER
+    };
+
+    /**
+     * Fields of the relationship (HealthcarePractitionerFacility) itself. The
+     * columns are optional in the header. A create row writes them to a new
+     * relationship, and to an existing active one as each mapping's UpdatePolicy
+     * allows (compared exactly; blank values change nothing). Terminate rows
+     * ignore them. Values are checked like the provider file's
+     * (ProviderCsvMapping.check); an invalid one is ignored with a warning.
+     *
+     * "Include in Directory?" is not mapped: Include_in_Directory__c is a formula.
+     */
+    public static final List<ProviderCsvMapping.FieldMapping> RELATIONSHIP_MAPPINGS = new List<ProviderCsvMapping.FieldMapping>{
+        new ProviderCsvMapping.FieldMapping(
+            LIMITATIONS_HEADER, HealthcarePractitionerFacility.Limitations__c,
+            ProviderCsvMapping.ValueType.TEXT, ProviderCsvMapping.UpdatePolicy.OVERWRITE
+        ),
+        // A URL field, but the value is not checked as a URL (decided 2026-11-06): only its length.
+        new ProviderCsvMapping.FieldMapping(
+            SCHEDULING_URL_HEADER, HealthcarePractitionerFacility.Scheduling_Site__c,
+            ProviderCsvMapping.ValueType.TEXT, ProviderCsvMapping.UpdatePolicy.OVERWRITE
+        ),
+        new ProviderCsvMapping.FieldMapping(
+            TELEMEDICINE_HEADER, HealthcarePractitionerFacility.Telemedicine_Capability__c,
+            ProviderCsvMapping.ValueType.YES_NO, ProviderCsvMapping.UpdatePolicy.OVERWRITE
+        )
     };
 
     /** What a row asks for: blank Terminate = CREATE, "Single", "All". */
@@ -55,6 +87,19 @@ public inherited sharing class RelationshipCsvMapping {
         /** Null when the Terminate value is not recognized (see terminateValue). */
         public Action action { get; private set; }
         public String terminateValue { get; private set; }
+
+        /** Valid, normalized, non-blank values of RELATIONSHIP_MAPPINGS. */
+        public Map<Schema.SObjectField, Object> valuesByField { get; private set; }
+        /** One INVALID_VALUE warning per invalid value of RELATIONSHIP_MAPPINGS. */
+        public List<RosterIntakeRow.Warning> warnings { get; private set; }
+        /** The RELATIONSHIP_MAPPINGS headers with a value, valid or not. */
+        public List<String> relationshipColumnsGiven { get; private set; }
+
+        private MappedRow() {
+            valuesByField = new Map<Schema.SObjectField, Object>();
+            warnings = new List<RosterIntakeRow.Warning>();
+            relationshipColumnsGiven = new List<String>();
+        }
 
         public Boolean hasInvalidStartDate() {
             return String.isNotBlank(rawStartDate) && startDate == null;
@@ -90,6 +135,23 @@ public inherited sharing class RelationshipCsvMapping {
         mapped.action = String.isBlank(mapped.terminateValue)
             ? Action.CREATE
             : ACTIONS_BY_TERMINATE_VALUE.get(mapped.terminateValue.toLowerCase());
+
+        for (ProviderCsvMapping.FieldMapping mapping : RELATIONSHIP_MAPPINGS) {
+            String header = mapping.headers[0];
+            String rawValue = row.get(header)?.trim();
+            if (String.isBlank(rawValue)) {
+                continue;
+            }
+            mapped.relationshipColumnsGiven.add(header);
+            ProviderCsvMapping.CheckedValue checked = ProviderCsvMapping.check(mapping, rawValue);
+            if (checked.invalidReason != null) {
+                mapped.warnings.add(new RosterIntakeRow.Warning(
+                    RosterIntakeIssues.INVALID_VALUE, header, 'Ignored: ' + checked.invalidReason + '.'
+                ));
+            } else {
+                mapped.valuesByField.put(mapping.field, checked.value);
+            }
+        }
         return mapped;
     }
 }

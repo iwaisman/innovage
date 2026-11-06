@@ -8,9 +8,12 @@
  * ACTIVE when IsActive is true and TerminationDate is blank.
  *
  *     Terminate blank   no active HPF  -> insert one                       INSERTED
- *                       active HPF     -> nothing; the start date is only
- *                                         set on insert (warning if the
- *                                         file gives one)                  UNCHANGED
+ *                       active HPF     -> update the relationship fields
+ *                                         that differ (RELATIONSHIP_
+ *                                         MAPPINGS)                        UPDATED
+ *                                         or nothing; the start date is
+ *                                         only set on insert (warning if
+ *                                         the file gives one)              UNCHANGED
  *     Terminate Single  active HPF     -> IsActive = false, TerminationDate TERMINATED
  *                       none           -> nothing (warning)                UNCHANGED
  *     Terminate All     every active HPF of the Provider at an in-scope
@@ -18,7 +21,7 @@
  *
  * On a create row, a malformed start date is an error, so the row can be
  * corrected rather than ingested without its date. Terminate rows ignore the
- * start date, with a warning. A terminated relationship is never reactivated: a
+ * start date and the relationship field columns, with a warning. A terminated relationship is never reactivated: a
  * Provider who returns to a facility gets a new HPF. Several active HPFs for
  * one pair are an anomaly: rows touching them warn so it can be investigated.
  *
@@ -152,6 +155,9 @@ public with sharing class RelationshipIntakeService {
             }
 
             if (mapped.action == RelationshipCsvMapping.Action.CREATE) {
+                for (RosterIntakeRow.Warning warning : mapped.warnings) {
+                    result.warn(warning);
+                }
                 if (mapped.hasInvalidStartDate()) {
                     result.fail(RosterIntakeIssues.INVALID_START_DATE, 'Relationship Start Date "' + mapped.rawStartDate +
                         '" is not a valid MM/DD/YYYY date.');
@@ -163,6 +169,11 @@ public with sharing class RelationshipIntakeService {
             if (String.isNotBlank(mapped.rawStartDate)) {
                 result.warn(RosterIntakeIssues.START_DATE_IGNORED, RelationshipCsvMapping.START_DATE_HEADER,
                     'A start date has no meaning on a termination; the Relationship Start Date was ignored.');
+            }
+            if (!mapped.relationshipColumnsGiven.isEmpty()) {
+                result.warn(RosterIntakeIssues.RELATIONSHIP_COLUMNS_IGNORED, String.join(mapped.relationshipColumnsGiven, ', '),
+                    'A termination does not change the relationship\'s other fields; "' +
+                    String.join(mapped.relationshipColumnsGiven, '", "') + '" ignored.');
             }
             if (mapped.action == RelationshipCsvMapping.Action.TERMINATE_ALL && mapped.hasFacilityValues()) {
                 result.warn(RosterIntakeIssues.FACILITY_COLUMNS_IGNORED, null,
@@ -269,14 +280,23 @@ public with sharing class RelationshipIntakeService {
         if (healthcareProviderIds.isEmpty()) {
             return new List<HealthcarePractitionerFacility>();
         }
-        return [
-            SELECT Id, HealthcareProviderId, HealthcareFacilityId, HealthcareFacility.Name,
-                HealthcareFacility.Legal_Owner__c, InitialStartDate
-            FROM HealthcarePractitionerFacility
-            WHERE HealthcareProviderId IN :healthcareProviderIds AND IsActive = TRUE AND TerminationDate = NULL
-            WITH SYSTEM_MODE
-            ORDER BY CreatedDate, Id
-        ];
+        // The relationship field mappings' fields too, to compare with the file's values.
+        // Their names come from Schema tokens, never from the file.
+        Set<String> fields = new Set<String>{
+            'Id', 'HealthcareProviderId', 'HealthcareFacilityId', 'HealthcareFacility.Name',
+            'HealthcareFacility.Legal_Owner__c', 'InitialStartDate'
+        };
+        for (ProviderCsvMapping.FieldMapping mapping : RelationshipCsvMapping.RELATIONSHIP_MAPPINGS) {
+            fields.add(mapping.getFieldName());
+        }
+        return (List<HealthcarePractitionerFacility>) Database.queryWithBinds(
+            'SELECT ' + String.join(new List<String>(fields), ', ') +
+            ' FROM HealthcarePractitionerFacility' +
+            ' WHERE HealthcareProviderId IN :healthcareProviderIds AND IsActive = TRUE AND TerminationDate = NULL' +
+            ' ORDER BY CreatedDate, Id',
+            new Map<String, Object>{ 'healthcareProviderIds' => healthcareProviderIds },
+            AccessLevel.SYSTEM_MODE
+        );
     }
 
     /*
@@ -343,13 +363,40 @@ public with sharing class RelationshipIntakeService {
         if (startDate != null && storedStartDate == null) {
             result.warn(RosterIntakeIssues.START_DATE_DIFFERS, RelationshipCsvMapping.START_DATE_HEADER,
                 'The relationship already exists without a start date; the file\'s ' + startDate.format() +
-                ' was not applied (start dates are only set when a relationship is created). No change was made.');
+                ' was not applied (start dates are only set when a relationship is created).');
         } else if (startDate != null && startDate != storedStartDate) {
             result.warn(RosterIntakeIssues.START_DATE_DIFFERS, RelationshipCsvMapping.START_DATE_HEADER,
                 'The relationship already exists with start date ' + storedStartDate.format() +
-                '; the file\'s ' + startDate.format() + ' was not applied. No change was made.');
+                '; the file\'s ' + startDate.format() + ' was not applied.');
         }
-        result.succeed(RosterIntakeRow.Outcome.UNCHANGED);
+        Boolean changed = updateRelationshipFields(pair, state);
+        result.succeed(changed ? RosterIntakeRow.Outcome.UPDATED : RosterIntakeRow.Outcome.UNCHANGED);
+    }
+
+    /*
+     * Writes the row's relationship field values (RelationshipCsvMapping.RELATIONSHIP_MAPPINGS)
+     * that differ, compared exactly, to each active relationship of the pair, as each
+     * mapping's UpdatePolicy allows. Blank values were never mapped, so they change
+     * nothing. Returns whether anything changed.
+     */
+    private static Boolean updateRelationshipFields(Pair pair, RowState state) {
+        Boolean changed = false;
+        for (Entry entry : pair.active) {
+            for (ProviderCsvMapping.FieldMapping mapping : RelationshipCsvMapping.RELATIONSHIP_MAPPINGS) {
+                if (!state.mapped.valuesByField.containsKey(mapping.field)) {
+                    continue;
+                }
+                Object storedValue = entry.record.get(mapping.field);
+                Object incomingValue = state.mapped.valuesByField.get(mapping.field);
+                if (!ProviderCsvMapping.mayWrite(mapping, storedValue, entry.isNew())
+                    || ProviderCsvMapping.isSameValue(mapping.valueType, storedValue, incomingValue)) {
+                    continue;
+                }
+                entry.set(mapping.field, incomingValue, state.result);
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     /*
@@ -358,7 +405,7 @@ public with sharing class RelationshipIntakeService {
      * EffectiveTo.
      */
     private static HealthcarePractitionerFacility newRelationship(RowState state) {
-        return new HealthcarePractitionerFacility(
+        HealthcarePractitionerFacility relationship = new HealthcarePractitionerFacility(
             Name = (state.provider.Name + ' @ ' + state.facility.Name).left(255),
             HealthcareProviderId = state.healthcareProviderId(),
             HealthcareFacilityId = state.healthcareFacilityId(),
@@ -366,6 +413,10 @@ public with sharing class RelationshipIntakeService {
             IsActive = true,
             InitialStartDate = state.mapped.startDate
         );
+        for (Schema.SObjectField field : state.mapped.valuesByField.keySet()) {
+            relationship.put(field, state.mapped.valuesByField.get(field));
+        }
+        return relationship;
     }
 
     /*

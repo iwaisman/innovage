@@ -146,7 +146,7 @@ private class RelationshipIntakeServiceTest {
 
         Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, result.outcome, 'Errors: ' + result.errors);
         Assert.isTrue(hasWarning(result, RosterIntakeIssues.START_DATE_DIFFERS.code), 'Warns it was not applied: ' + result.warnings);
-        Assert.isTrue(result.warnings[0].message.contains('No change was made'), 'Says so: ' + result.warnings[0].message);
+        Assert.isTrue(result.warnings[0].message.contains('start dates are only set when a relationship is created'), 'Says why: ' + result.warnings[0].message);
         Assert.isNull(RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0].InitialStartDate, 'Only set when created');
     }
 
@@ -586,5 +586,121 @@ private class RelationshipIntakeServiceTest {
 
         assertError(results[0], RosterIntakeIssues.FACILITY_NOT_IN_ORGANIZATION.code);
         Assert.areEqual(RosterIntakeRow.Outcome.INSERTED, results[1].outcome, 'Errors: ' + results[1].errors);
+    }
+
+    // ─── Relationship fields ───────────────────────────────────────────
+
+    private static HealthcarePractitionerFacility fieldsOf(String providerLastName) {
+        return [
+            SELECT Limitations__c, Scheduling_Site__c, Telemedicine_Capability__c, TerminationDate
+            FROM HealthcarePractitionerFacility
+            WHERE HealthcareProviderId = :provider(providerLastName).Healthcare_Provider__c
+            ORDER BY CreatedDate DESC, Id DESC
+            LIMIT 1
+        ];
+    }
+
+    private static Map<String, String> createRowWithFields(String limitations, String url, String telemedicine) {
+        Map<String, String> row = createRow(MAIN);
+        row.put(RelationshipCsvMapping.LIMITATIONS_HEADER, limitations);
+        row.put(RelationshipCsvMapping.SCHEDULING_URL_HEADER, url);
+        row.put(RelationshipCsvMapping.TELEMEDICINE_HEADER, telemedicine);
+        return row;
+    }
+
+    @IsTest
+    static void shouldSetRelationshipFields_WhenCreated() {
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(createRowWithFields('Adults only', 'example.com/book', 'yes'));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.INSERTED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(0, result.warnings.size(), 'No warnings: ' + result.warnings);
+        HealthcarePractitionerFacility saved = fieldsOf('Alpha');
+        Assert.areEqual('Adults only', saved.Limitations__c, 'Limitations');
+        Assert.areEqual('example.com/book', saved.Scheduling_Site__c, 'URL taken as given, without an http(s) prefix');
+        Assert.isTrue(saved.Telemedicine_Capability__c, 'Telemedicine "yes"');
+    }
+
+    @IsTest
+    static void shouldUpdateDifferingFields_WhenRelationshipActive() {
+        RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), null);
+
+        Test.startTest();
+        RosterIntakeRow.Result first = ingest(createRowWithFields('Adults only', '', 'Yes'));
+        RosterIntakeRow.Result again = ingest(createRowWithFields('Adults only', '', 'YES'));
+        RosterIntakeRow.Result recased = ingest(createRowWithFields('ADULTS ONLY', '', ''));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.UPDATED, first.outcome, 'Errors: ' + first.errors);
+        Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, again.outcome, 'Same values');
+        Assert.areEqual(RosterIntakeRow.Outcome.UPDATED, recased.outcome, 'Compared exactly: a case difference is a change');
+        HealthcarePractitionerFacility saved = fieldsOf('Alpha');
+        Assert.areEqual('ADULTS ONLY', saved.Limitations__c, 'Overwritten');
+        Assert.isTrue(saved.Telemedicine_Capability__c, 'A blank Telemedicine kept the stored value');
+        Assert.areEqual(1, RelationshipTestDataFactory.relationshipsOf(provider('Alpha')).size(), 'No new relationship');
+    }
+
+    @IsTest
+    static void shouldWarnAndSkipValue_WhenTelemedicineNotYesOrNo() {
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(createRowWithFields('Adults only', '', 'Maybe'));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.INSERTED, result.outcome, 'Still created: ' + result.errors);
+        Assert.areEqual(1, result.warnings.size(), 'One warning: ' + result.warnings);
+        Assert.areEqual(RosterIntakeIssues.INVALID_VALUE.code, result.warnings[0].code, 'Code');
+        Assert.areEqual(RelationshipCsvMapping.TELEMEDICINE_HEADER, result.warnings[0].column, 'Column');
+        HealthcarePractitionerFacility saved = fieldsOf('Alpha');
+        Assert.isFalse(saved.Telemedicine_Capability__c, 'Left at its default');
+        Assert.areEqual('Adults only', saved.Limitations__c, 'Other values still set');
+    }
+
+    @IsTest
+    static void shouldWarnAndSkipValue_WhenTextTooLong() {
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(createRowWithFields('x'.repeat(256), '', ''));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.INSERTED, result.outcome, 'Still created: ' + result.errors);
+        Assert.areEqual(RosterIntakeIssues.INVALID_VALUE.code, result.warnings[0].code, 'Code');
+        Assert.isTrue(result.warnings[0].message.contains('longer than 255'), 'Message: ' + result.warnings[0].message);
+        Assert.isNull(fieldsOf('Alpha').Limitations__c, 'Not written');
+    }
+
+    @IsTest
+    static void shouldIgnoreRelationshipFields_WhenTerminating() {
+        RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), null);
+        Map<String, String> row = createRowWithFields('Adults only', '', 'Maybe');
+        row.put(RelationshipCsvMapping.TERMINATE_HEADER, 'Single');
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(row);
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(1, result.warnings.size(), 'One warning, not one per column: ' + result.warnings);
+        Assert.areEqual(RosterIntakeIssues.RELATIONSHIP_COLUMNS_IGNORED.code, result.warnings[0].code, 'Code');
+        Assert.areEqual(
+            RelationshipCsvMapping.LIMITATIONS_HEADER + ', ' + RelationshipCsvMapping.TELEMEDICINE_HEADER,
+            result.warnings[0].column,
+            'Names the columns given'
+        );
+        Assert.isNull(fieldsOf('Alpha').Limitations__c, 'Not written');
+    }
+
+    @IsTest
+    static void shouldApplyFieldsInFileOrder_WhenSameRelationshipTwiceInSlice() {
+        Test.startTest();
+        List<RosterIntakeRow.Result> results = ingestSlice(new List<Map<String, String>>{
+            createRowWithFields('First', '', 'No'),
+            createRowWithFields('Second', '', 'No')
+        });
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.INSERTED, results[0].outcome, 'Errors: ' + results[0].errors);
+        Assert.areEqual(RosterIntakeRow.Outcome.UPDATED, results[1].outcome, 'Changes the relationship the first row creates');
+        Assert.areEqual('Second', fieldsOf('Alpha').Limitations__c, 'The last row wins');
+        Assert.areEqual(1, RelationshipTestDataFactory.relationshipsOf(provider('Alpha')).size(), 'One relationship');
     }
 }

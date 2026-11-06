@@ -454,8 +454,8 @@ For a list of rows it:
 
    | Terminate | Ledger state | Result | Outcome |
    |---|---|---|---|
-   | blank | no active HPF | New HPF: Name "Provider @ Facility", both links, `IsActive = true`, `InitialStartDate` from the file. Nothing else is set (not `AccountId`, `PractitionerId`, `Predecessor_Record__c`, `EffectiveFrom` or `EffectiveTo`). A Provider who returns to a facility gets a new HPF; the terminated one is left as it is | INSERTED |
-   | blank | active HPF | Nothing: the start date is only written when an HPF is created. A file date that differs from the stored one, or is given when none is stored, gets a START_DATE_DIFFERS warning saying no change was made | UNCHANGED |
+   | blank | no active HPF | New HPF: Name "Provider @ Facility", both links, `IsActive = true`, `InitialStartDate` and the relationship fields (`RelationshipCsvMapping.RELATIONSHIP_MAPPINGS`: Limitations, Scheduling URL, Telemedicine) from the file. Nothing else is set (not `AccountId`, `PractitionerId`, `Predecessor_Record__c`, `EffectiveFrom` or `EffectiveTo`). A Provider who returns to a facility gets a new HPF; the terminated one is left as it is | INSERTED |
+   | blank | active HPF | The relationship fields that differ (compared exactly; blank values change nothing) are updated, as each mapping's update policy allows. The start date is only written when an HPF is created: a file date that differs from the stored one, or is given when none is stored, gets a START_DATE_DIFFERS warning | UPDATED / UNCHANGED |
    | Single | active HPF | `IsActive = false`, `TerminationDate` = run date | TERMINATED |
    | Single | none | Nothing; NO_ACTIVE_RELATIONSHIP warning | UNCHANGED |
    | All | — | Terminate every active HPF of the Provider at an in-scope facility; if none, NO_ACTIVE_RELATIONSHIP warning | TERMINATED / UNCHANGED |
@@ -464,7 +464,10 @@ For a list of rows it:
    still proceeds (a terminate ends all of them; a create creates nothing), with
    a MULTIPLE_ACTIVE_RELATIONSHIPS warning so the data can be investigated.
 
-6. **Saves** with at most one partial-success update (terminations) and then
+   Terminate rows ignore the relationship field columns, with one
+   RELATIONSHIP_COLUMNS_IGNORED warning naming those filled in.
+
+6. **Saves** with at most one partial-success update (terminations and field updates) and then
    one insert, in system mode. A row whose record fails to save
    becomes a SAVE_ERROR.
 

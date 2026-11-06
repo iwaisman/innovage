@@ -11,6 +11,9 @@ FILE FORMAT
 - All seven columns are required in the header.
   Provider Unique ID, Individual NPI, Facility Unique ID, Facility NPI, Facility Shipping Address, Relationship Start Date, Terminate. A missing column fails the whole run. Values may be blank. Column names must match exactly, including case and spacing.
 
+- The relationship field columns are optional.
+  Limitations, Practitioner Scheduling URL and Telemedicine Capability may be left out of the header (see RELATIONSHIP FIELDS). A misspelt one is ignored without a warning. "Include in Directory?" is not used: that field is calculated by Salesforce.
+
 - Every row has the same number of columns as the header.
   A row with a different count is a row error (COLUMN_COUNT) and is skipped.
 
@@ -45,7 +48,7 @@ ACTIVE RELATIONSHIP
 ACTIONS
 
 - Terminate blank: create.
-  No active relationship: one is created (Active, with the start date if given) - Inserted. Already active: nothing changes - Unchanged. A Provider who left and returns gets a new relationship; the old one is kept as it is.
+  No active relationship: one is created (Active, with the start date and relationship fields if given) - Inserted. Already active: relationship fields that differ are updated - Updated; otherwise nothing changes - Unchanged. The start date is never changed. A Provider who left and returns gets a new relationship; the old one is kept as it is.
 
 - Terminate = Single: end one relationship.
   The active relationship is deactivated and its Termination Date set to the run date - Terminated. None active: nothing changes, warning NO_ACTIVE_RELATIONSHIP - Unchanged.
@@ -55,6 +58,14 @@ ACTIONS
 
 - Terminations use the run date.
   The Termination Date is the date the ingestion run started. No termination reason is set.
+
+RELATIONSHIP FIELDS
+
+- Limitations, Practitioner Scheduling URL and Telemedicine Capability set fields of the relationship.
+  On a create row they are written to a new relationship, and to an active one where they differ (compared exactly, case and spaces included). A blank cell never changes or clears anything. Telemedicine Capability is Yes or No (any case). The Scheduling URL is not checked as a URL. An invalid or over-long value is ignored with warning INVALID_VALUE; the rest of the row is still ingested.
+
+- Terminate rows ignore them.
+  A termination never changes these fields; if any is filled in, the row gets one warning, RELATIONSHIP_COLUMNS_IGNORED, naming the columns.
 
 ROWS IN THE SAME FILE
 
@@ -68,7 +79,7 @@ DATA ANOMALIES
 
 OUTCOMES
 
-- Every row ends as Inserted, Terminated, Unchanged or Error.
+- Every row ends as Inserted, Updated, Terminated, Unchanged or Error.
   Counts are rows, not relationships: a Terminate = All row that ends three relationships counts once. Errors and warnings are recorded as Issues on the Run, with row number, code, message, Provider and facility.
 
 SIDE EFFECTS

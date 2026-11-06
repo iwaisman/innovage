@@ -88,9 +88,9 @@ public inherited sharing class RosterIntakeIssues {
     public static final Issue LAST_NAME_DIFFERS = new Issue('LAST_NAME_DIFFERS', SEVERITY_WARNING, FileType.PROVIDER,
         'An existing Provider\'s Last Name differs from the file\'s, compared exactly; Last Name is insert-only, '
         + 'so it is not changed (ProviderIntakeService.warnIfLastNameDiffers).');
-    public static final Issue INVALID_VALUE = new Issue('INVALID_VALUE', SEVERITY_WARNING, FileType.PROVIDER,
+    public static final Issue INVALID_VALUE = new Issue('INVALID_VALUE', SEVERITY_WARNING, FileType.BOTH,
         'A value fails its column\'s validation (ValueType) or is longer than its field, and is ignored '
-        + '(ProviderCsvMapping.mapRow).');
+        + '(ProviderCsvMapping.check, from ProviderCsvMapping.mapRow and RelationshipCsvMapping.mapRow).');
     public static final Issue ADDRESS_NOT_UPDATED = new Issue('ADDRESS_NOT_UPDATED', SEVERITY_WARNING, FileType.PROVIDER,
         'An existing Provider\'s address is not updated because a part is invalid, blank in the file but not '
         + 'on the Provider, or Line 2 is given without Line 1 (ProviderCsvMapping.AddressGroup, '
@@ -116,6 +116,10 @@ public inherited sharing class RosterIntakeIssues {
         'A create row has a malformed Relationship Start Date (RelationshipIntakeService).');
     public static final Issue START_DATE_IGNORED = new Issue('START_DATE_IGNORED', SEVERITY_WARNING, FileType.RELATIONSHIPS,
         'A terminate row gives a Relationship Start Date, which terminations ignore (RelationshipIntakeService).');
+    public static final Issue RELATIONSHIP_COLUMNS_IGNORED = new Issue(
+        'RELATIONSHIP_COLUMNS_IGNORED', SEVERITY_WARNING, FileType.RELATIONSHIPS,
+        'A terminate row fills in relationship field columns (Limitations, Practitioner Scheduling URL, '
+        + 'Telemedicine Capability), which terminations ignore (RelationshipIntakeService).');
     public static final Issue FACILITY_COLUMNS_IGNORED = new Issue(
         'FACILITY_COLUMNS_IGNORED', SEVERITY_WARNING, FileType.RELATIONSHIPS,
         'A Terminate = All row fills in facility columns, which it ignores (RelationshipIntakeService).');
@@ -175,6 +179,7 @@ public inherited sharing class RosterIntakeIssues {
         MISSING_LAST_NAME, LAST_NAME_DIFFERS, INVALID_VALUE, ADDRESS_NOT_UPDATED, HEALTHCARE_PROVIDER_NOT_SAVED,
         UNKNOWN_SPECIALTY, AMBIGUOUS_SPECIALTY, SPECIALTY_NOT_SAVED,
         INVALID_TERMINATE_VALUE, INVALID_START_DATE, START_DATE_IGNORED, FACILITY_COLUMNS_IGNORED,
+        RELATIONSHIP_COLUMNS_IGNORED,
         UNKNOWN_PROVIDER, PROVIDER_NOT_SET_UP,
         NO_FACILITY_KEY_VALUES, MALFORMED_FACILITY_UNIQUE_ID, MALFORMED_FACILITY_NPI, UNKNOWN_FACILITY_UNIQUE_ID,
         FACILITY_KEY_MISMATCH, MULTIPLE_FACILITY_MATCHES, FACILITY_NOT_FOUND, FACILITY_NOT_SET_UP,
