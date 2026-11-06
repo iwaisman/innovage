@@ -184,6 +184,21 @@
                 <default>false</default>
                 <label>RELATIONSHIP_COLUMNS_IGNORED</label>
             </value>
+            <value>
+                <fullName>TERMINATION_COLUMNS_ON_CREATE_ROW</fullName>
+                <default>false</default>
+                <label>TERMINATION_COLUMNS_ON_CREATE_ROW</label>
+            </value>
+            <value>
+                <fullName>INVALID_TERMINATION_DATE</fullName>
+                <default>false</default>
+                <label>INVALID_TERMINATION_DATE</label>
+            </value>
+            <value>
+                <fullName>TERMINATION_BEFORE_START</fullName>
+                <default>false</default>
+                <label>TERMINATION_BEFORE_START</label>
+            </value>
         </valueSetDefinition>
     </valueSet>
 </CustomField>

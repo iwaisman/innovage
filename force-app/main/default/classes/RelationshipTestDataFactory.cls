@@ -114,6 +114,7 @@ public class RelationshipTestDataFactory {
             Name = provider.Name + ' @ ' + facility.Name,
             HealthcareProviderId = provider.Healthcare_Provider__c,
             HealthcareFacilityId = facility.Healthcare_Facility__c,
+            // As the org's data may have it; intake neither reads nor writes IsActive.
             IsActive = terminationDate == null,
             TerminationDate = terminationDate
         );
@@ -152,7 +153,7 @@ public class RelationshipTestDataFactory {
      */
     public static List<HealthcarePractitionerFacility> relationshipsOf(Account provider) {
         return [
-            SELECT Id, Name, HealthcareFacilityId, IsActive, InitialStartDate, TerminationDate
+            SELECT Id, Name, HealthcareFacilityId, IsActive, Active__c, InitialStartDate, TerminationDate, Termination_Notes__c
             FROM HealthcarePractitionerFacility
             WHERE HealthcareProviderId = :provider.Healthcare_Provider__c
             ORDER BY CreatedDate DESC, Id DESC

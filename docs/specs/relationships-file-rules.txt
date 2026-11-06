@@ -42,22 +42,34 @@ MATCHING
 
 ACTIVE RELATIONSHIP
 
-- A relationship is active when Active is checked and it has no Termination Date.
-  Provisional definition. Only active relationships are terminated or count as already existing.
+- A relationship is active, for intake, when it has not ended: its Termination Date is blank or after the run date.
+  Decided 2026-11-06. Only active relationships are terminated or count as already existing. The start date and the Active checkbox (IsActive) do not matter: a relationship that starts in the future is active for intake, and one whose Termination Date is the run date has ended. This follows the org's Active__c formula (started, and not past its Termination Date) except in those two cases.
+
+- Intake never reads or changes the Active checkbox (IsActive).
+  Decided 2026-11-06.
 
 ACTIONS
 
 - Terminate blank: create.
-  No active relationship: one is created (Active, with the start date and relationship fields if given) - Inserted. Already active: relationship fields that differ are updated - Updated; otherwise nothing changes - Unchanged. The start date is never changed. A Provider who left and returns gets a new relationship; the old one is kept as it is.
+  No active relationship: one is created, with the start date (the run date if blank) and the relationship fields if given - Inserted. Already active: relationship fields that differ are updated - Updated; otherwise nothing changes - Unchanged. The start date is never changed. A Provider who left and returns gets a new relationship; the old one is kept as it is.
 
 - Terminate = Single: end one relationship.
-  The active relationship is deactivated and its Termination Date set to the run date - Terminated. None active: nothing changes, warning NO_ACTIVE_RELATIONSHIP - Unchanged.
+  The active relationship's Termination Date is set to the file's Termination Date, or the run date if blank, and its Termination Notes to the file's if given - Terminated (Unchanged if it already had both). A relationship whose Termination Date is the run date or earlier has ended for intake (by the Active__c formula it stays active through that date); one dated later stays active until then. None active: nothing changes, warning NO_ACTIVE_RELATIONSHIP - Unchanged.
 
 - Terminate = All: end all of the Provider's relationships in scope.
-  Every active relationship of the Provider at a facility in the roster's scope is terminated - Terminated. Relationships at other Organizations' facilities are not touched. None active: warning NO_ACTIVE_RELATIONSHIP - Unchanged.
+  Every active relationship of the Provider at a facility in the roster's scope is terminated, with the same date and notes - Terminated. Relationships at other Organizations' facilities are not touched. None active: warning NO_ACTIVE_RELATIONSHIP - Unchanged.
 
-- Terminations use the run date.
-  The Termination Date is the date the ingestion run started. No termination reason is set.
+- Termination Date and Termination Notes (optional columns) are used by terminate rows only.
+  Termination Date: MM/DD/YYYY, past or future; blank means the run date. A malformed one is a row error (INVALID_TERMINATION_DATE). Termination Notes: overwrite the stored notes; blank leaves them; longer than 255 characters is ignored with warning INVALID_VALUE (the termination still happens). No termination reason is set.
+
+- A create row (Terminate blank) with a Termination Date or Termination Notes is an error.
+  TERMINATION_COLUMNS_ON_CREATE_ROW; nothing is created.
+
+- A relationship cannot end before it starts.
+  A termination dated before a relationship's start date is a row error (TERMINATION_BEFORE_START); ending on the start date is allowed. With Terminate = All, nothing is terminated if any of the relationships would end before it starts.
+
+- Terminating again replaces a scheduled end.
+  A relationship with a future Termination Date is still active; a terminate row replaces its date (and notes, if given).
 
 RELATIONSHIP FIELDS
 
@@ -84,8 +96,8 @@ OUTCOMES
 
 SIDE EFFECTS
 
-- Creating or terminating a relationship runs the org's payer participation flows.
-  Activating a relationship creates a Provider Plan Participation for the facility's payer network; deactivating the last one in a network ends it.
+- Intake no longer triggers the org's payer participation flows.
+  Those flows react to the Active checkbox (IsActive), which intake does not set, so creating or terminating a relationship through intake neither creates nor ends a Provider Plan Participation. Updating relationship fields on an existing relationship is a save, so the flows run then, as they would for any edit.
 
 RUNS
 
@@ -93,7 +105,7 @@ RUNS
   A personnel run and a relationships run of the same roster cannot overlap; different rosters can. A run processes the file version that was current when it started.
 
 - Re-running a file is safe.
-  Relationships already created come out Unchanged; terminations already done come out Unchanged with a warning.
+  Relationships already created come out Unchanged; terminations already done come out Unchanged, with a warning when the relationship has already ended (a future-dated one with the same date and notes has nothing to change).
 
 PRIVACY
 

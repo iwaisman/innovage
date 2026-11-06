@@ -105,7 +105,9 @@ private class RelationshipIntakeServiceTest {
         List<HealthcarePractitionerFacility> relationships = RelationshipTestDataFactory.relationshipsOf(provider('Alpha'));
         Assert.areEqual(1, relationships.size(), 'One relationship');
         HealthcarePractitionerFacility relationship = relationships[0];
-        Assert.isTrue(relationship.IsActive, 'Created active, so the payer participation flow sees it');
+        Assert.isFalse(relationship.IsActive, 'IsActive is never set (it defaults to false)');
+        Assert.isNull(relationship.TerminationDate, 'Not ended');
+        Assert.isTrue(relationship.Active__c, 'Active by the org\'s formula: started, not ended');
         Assert.areEqual(Date.newInstance(2026, 3, 15), relationship.InitialStartDate, 'Start date from the file');
         Assert.areEqual(facility(MAIN).Healthcare_Facility__c, relationship.HealthcareFacilityId, 'Linked to the facility');
         Assert.areEqual(provider('Alpha').Name + ' @ ' + MAIN, relationship.Name, 'Name is "<Provider> @ <Facility>"');
@@ -180,20 +182,51 @@ private class RelationshipIntakeServiceTest {
         List<HealthcarePractitionerFacility> relationships = RelationshipTestDataFactory.relationshipsOf(provider('Alpha'));
         Assert.areEqual(2, relationships.size(), 'The old one is kept, not reactivated');
         Assert.areNotEqual(old.Id, relationships[0].Id, 'A new relationship');
-        Assert.isTrue(relationships[0].IsActive, 'The new one is active');
+        Assert.areEqual(Date.today(), relationships[0].InitialStartDate, 'A blank start date becomes the run date');
+        Assert.isTrue(relationships[0].Active__c, 'So the new one is active');
     }
 
     @IsTest
-    static void shouldInsert_WhenOnlyRelationshipHasTerminationDateButIsActive() {
-        // Not active by our definition (IsActive and no TerminationDate), so a new one is created.
-        HealthcarePractitionerFacility odd = RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), null);
-        update new HealthcarePractitionerFacility(Id = odd.Id, TerminationDate = Date.today().addDays(10));
+    static void shouldTreatAsExisting_WhenTerminationDateInFuture() {
+        RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), Date.today().addDays(10));
 
         Test.startTest();
         RosterIntakeRow.Result result = ingest(createRow(MAIN));
         Test.stopTest();
 
-        Assert.areEqual(RosterIntakeRow.Outcome.INSERTED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, result.outcome, 'Not ended yet: ' + result.errors);
+        Assert.areEqual(1, RelationshipTestDataFactory.relationshipsOf(provider('Alpha')).size(), 'No duplicate');
+    }
+
+    @IsTest
+    static void shouldTreatAsExisting_WhenStartDateInFuture() {
+        HealthcarePractitionerFacility future = RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), null);
+        update new HealthcarePractitionerFacility(Id = future.Id, InitialStartDate = Date.today().addDays(30));
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(createRow(MAIN));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, result.outcome, 'Existing although Active__c is false: ' + result.errors);
+        HealthcarePractitionerFacility relationship = RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0];
+        Assert.isFalse(relationship.Active__c, 'Not started, so not active by the formula');
+        Assert.areEqual(1, RelationshipTestDataFactory.relationshipsOf(provider('Alpha')).size(), 'No duplicate');
+    }
+
+    @IsTest
+    static void shouldTreatAsEnded_WhenTerminationDateIsRunDate() {
+        RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), Date.today());
+        Map<String, String> terminate = createRow(MAIN);
+        terminate.put(RelationshipCsvMapping.TERMINATE_HEADER, 'Single');
+
+        Test.startTest();
+        RosterIntakeRow.Result terminated = ingest(terminate);
+        RosterIntakeRow.Result created = ingest(createRow(MAIN));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, terminated.outcome, 'Already ended: ' + terminated.errors);
+        Assert.isTrue(hasWarning(terminated, RosterIntakeIssues.NO_ACTIVE_RELATIONSHIP.code), 'Nothing to terminate');
+        Assert.areEqual(RosterIntakeRow.Outcome.INSERTED, created.outcome, 'A new one: ' + created.errors);
     }
 
     @IsTest
@@ -226,7 +259,7 @@ private class RelationshipIntakeServiceTest {
         Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, terminated.outcome, 'Errors: ' + terminated.errors);
         Assert.isTrue(hasWarning(terminated, RosterIntakeIssues.MULTIPLE_ACTIVE_RELATIONSHIPS.code), 'Terminate warns: ' + terminated.warnings);
         for (HealthcarePractitionerFacility relationship : RelationshipTestDataFactory.relationshipsOf(alpha)) {
-            Assert.isFalse(relationship.IsActive, 'Both terminated');
+            Assert.areEqual(Date.today(), relationship.TerminationDate, 'Both terminated');
         }
     }
 
@@ -244,7 +277,7 @@ private class RelationshipIntakeServiceTest {
 
         Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, result.outcome, 'Errors: ' + result.errors);
         HealthcarePractitionerFacility relationship = RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0];
-        Assert.isFalse(relationship.IsActive, 'Deactivated, so the payer participation flow sees it');
+        Assert.isTrue(relationship.IsActive, 'IsActive is left as it was');
         Assert.areEqual(Date.today(), relationship.TerminationDate, 'Terminated as of the run date');
     }
 
@@ -298,7 +331,7 @@ private class RelationshipIntakeServiceTest {
         Id elsewhere = facility(ELSEWHERE).Healthcare_Facility__c;
         for (HealthcarePractitionerFacility relationship : RelationshipTestDataFactory.relationshipsOf(alpha)) {
             Boolean outOfScope = relationship.HealthcareFacilityId == elsewhere;
-            Assert.areEqual(outOfScope, relationship.IsActive, 'Only out-of-scope relationships stay active');
+            Assert.areEqual(outOfScope, relationship.TerminationDate == null, 'Only out-of-scope relationships are not terminated');
         }
     }
 
@@ -536,7 +569,7 @@ private class RelationshipIntakeServiceTest {
         Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, results[1].outcome, 'Errors: ' + results[1].errors);
         List<HealthcarePractitionerFacility> relationships = RelationshipTestDataFactory.relationshipsOf(provider('Alpha'));
         Assert.areEqual(1, relationships.size(), 'One record');
-        Assert.isFalse(relationships[0].IsActive, 'Saved in its final state');
+        Assert.areEqual(Date.today(), relationships[0].InitialStartDate, 'Saved in its final state: started');
         Assert.areEqual(Date.today(), relationships[0].TerminationDate, 'Terminated on the run date');
     }
 
@@ -555,8 +588,8 @@ private class RelationshipIntakeServiceTest {
         List<HealthcarePractitionerFacility> relationships = RelationshipTestDataFactory.relationshipsOf(provider('Alpha'));
         Assert.areEqual(2, relationships.size(), 'Old and new');
         Assert.areNotEqual(old.Id, relationships[0].Id, 'Newest is the new one');
-        Assert.isTrue(relationships[0].IsActive, 'New is active');
-        Assert.isFalse(relationships[1].IsActive, 'Old is terminated');
+        Assert.isNull(relationships[0].TerminationDate, 'New is not ended');
+        Assert.areEqual(Date.today(), relationships[1].TerminationDate, 'Old is terminated');
     }
 
     @IsTest
@@ -571,7 +604,7 @@ private class RelationshipIntakeServiceTest {
 
         Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, results[2].outcome, 'Errors: ' + results[2].errors);
         for (HealthcarePractitionerFacility relationship : RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))) {
-            Assert.isFalse(relationship.IsActive, 'Both inserted already terminated');
+            Assert.areEqual(Date.today(), relationship.TerminationDate, 'Both inserted already terminated');
         }
     }
 
@@ -702,5 +735,170 @@ private class RelationshipIntakeServiceTest {
         Assert.areEqual(RosterIntakeRow.Outcome.UPDATED, results[1].outcome, 'Changes the relationship the first row creates');
         Assert.areEqual('Second', fieldsOf('Alpha').Limitations__c, 'The last row wins');
         Assert.areEqual(1, RelationshipTestDataFactory.relationshipsOf(provider('Alpha')).size(), 'One relationship');
+    }
+
+    // ─── Termination Date and Termination Notes ────────────────────────
+
+    private static String mmddyyyy(Date value) {
+        return value.month() + '/' + value.day() + '/' + value.year();
+    }
+
+    private static Map<String, String> terminateRow(String facilityName, String terminationDate, String notes) {
+        Map<String, String> row = createRow(facilityName);
+        row.put(RelationshipCsvMapping.TERMINATE_HEADER, 'Single');
+        row.put(RelationshipCsvMapping.TERMINATION_DATE_HEADER, terminationDate);
+        row.put(RelationshipCsvMapping.TERMINATION_NOTES_HEADER, notes);
+        return row;
+    }
+
+    @IsTest
+    static void shouldUseFileTerminationDateAndNotes_WhenGiven() {
+        HealthcarePractitionerFacility existing = RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), null);
+        update new HealthcarePractitionerFacility(Id = existing.Id, Termination_Notes__c = 'Old notes');
+        Date lastMonth = Date.today().addDays(-30);
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(terminateRow(MAIN, mmddyyyy(lastMonth), 'Moved away'));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, result.outcome, 'Errors: ' + result.errors);
+        HealthcarePractitionerFacility relationship = RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0];
+        Assert.areEqual(lastMonth, relationship.TerminationDate, 'The file\'s date, back-dated');
+        Assert.areEqual('Moved away', relationship.Termination_Notes__c, 'Notes overwritten');
+    }
+
+    @IsTest
+    static void shouldKeepNotes_WhenFileNotesBlank() {
+        HealthcarePractitionerFacility existing = RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), null);
+        update new HealthcarePractitionerFacility(Id = existing.Id, Termination_Notes__c = 'Old notes');
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(terminateRow(MAIN, '', ''));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, result.outcome, 'Errors: ' + result.errors);
+        HealthcarePractitionerFacility relationship = RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0];
+        Assert.areEqual(Date.today(), relationship.TerminationDate, 'The run date when none is given');
+        Assert.areEqual('Old notes', relationship.Termination_Notes__c, 'Kept');
+    }
+
+    @IsTest
+    static void shouldStayExisting_WhenTerminatedWithFutureDate() {
+        RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), null);
+        Date nextMonth = Date.today().addDays(30);
+
+        Test.startTest();
+        List<RosterIntakeRow.Result> results = ingestSlice(new List<Map<String, String>>{
+            terminateRow(MAIN, mmddyyyy(nextMonth), ''),
+            createRow(MAIN)
+        });
+        RosterIntakeRow.Result again = ingest(terminateRow(MAIN, mmddyyyy(nextMonth), ''));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, results[0].outcome, 'Errors: ' + results[0].errors);
+        Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, results[1].outcome, 'Still existing until then, so no new one');
+        Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, again.outcome, 'Same date again: nothing to change');
+        List<HealthcarePractitionerFacility> relationships = RelationshipTestDataFactory.relationshipsOf(provider('Alpha'));
+        Assert.areEqual(1, relationships.size(), 'No duplicate');
+        Assert.areEqual(nextMonth, relationships[0].TerminationDate, 'Scheduled end');
+    }
+
+    @IsTest
+    static void shouldReplaceScheduledEnd_WhenTerminatedAgain() {
+        RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), Date.today().addDays(30));
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(terminateRow(MAIN, '', ''));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(Date.today(), RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0].TerminationDate, 'Replaced by the run date');
+    }
+
+    @IsTest
+    static void shouldFail_WhenTerminationBeforeStart() {
+        HealthcarePractitionerFacility future = RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), null);
+        update new HealthcarePractitionerFacility(Id = future.Id, InitialStartDate = Date.today().addDays(30));
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(terminateRow(MAIN, '', ''));
+        Test.stopTest();
+
+        assertError(result, RosterIntakeIssues.TERMINATION_BEFORE_START.code);
+        Assert.isNull(RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0].TerminationDate, 'Not terminated');
+    }
+
+    @IsTest
+    static void shouldTerminateNothing_WhenAllAndOneWouldEndBeforeStart() {
+        Account alpha = provider('Alpha');
+        RelationshipTestDataFactory.createRelationship(alpha, facility(MAIN), null);
+        HealthcarePractitionerFacility future = RelationshipTestDataFactory.createRelationship(alpha, facility(OAK), null);
+        update new HealthcarePractitionerFacility(Id = future.Id, InitialStartDate = Date.today().addDays(30));
+        Map<String, String> row = RelationshipTestDataFactory.row(ALPHA_NPI, '', 'All');
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(row);
+        Test.stopTest();
+
+        assertError(result, RosterIntakeIssues.TERMINATION_BEFORE_START.code);
+        for (HealthcarePractitionerFacility relationship : RelationshipTestDataFactory.relationshipsOf(alpha)) {
+            Assert.isNull(relationship.TerminationDate, 'All or nothing');
+        }
+    }
+
+    @IsTest
+    static void shouldAllowTermination_WhenOnStartDate() {
+        HealthcarePractitionerFacility future = RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), null);
+        Date start = Date.today().addDays(30);
+        update new HealthcarePractitionerFacility(Id = future.Id, InitialStartDate = start);
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(terminateRow(MAIN, mmddyyyy(start), ''));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, result.outcome, 'Ending on the start date is allowed: ' + result.errors);
+    }
+
+    @IsTest
+    static void shouldFail_WhenCreateRowHasTerminationColumns() {
+        Map<String, String> withDate = createRow(MAIN);
+        withDate.put(RelationshipCsvMapping.TERMINATION_DATE_HEADER, '01/01/2026');
+        Map<String, String> withNotes = createRow(OAK);
+        withNotes.put(RelationshipCsvMapping.TERMINATION_NOTES_HEADER, 'Leaving');
+
+        Test.startTest();
+        RosterIntakeRow.Result dateResult = ingest(withDate);
+        RosterIntakeRow.Result notesResult = ingest(withNotes);
+        Test.stopTest();
+
+        assertError(dateResult, RosterIntakeIssues.TERMINATION_COLUMNS_ON_CREATE_ROW.code);
+        assertError(notesResult, RosterIntakeIssues.TERMINATION_COLUMNS_ON_CREATE_ROW.code);
+        Assert.areEqual(0, RelationshipTestDataFactory.relationshipsOf(provider('Alpha')).size(), 'Nothing created');
+    }
+
+    @IsTest
+    static void shouldFail_WhenTerminationDateInvalid() {
+        RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), null);
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(terminateRow(MAIN, '2026-01-01', ''));
+        Test.stopTest();
+
+        assertError(result, RosterIntakeIssues.INVALID_TERMINATION_DATE.code);
+        Assert.isNull(RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0].TerminationDate, 'Not terminated');
+    }
+
+    @IsTest
+    static void shouldTerminateAndWarn_WhenNotesTooLong() {
+        RelationshipTestDataFactory.createRelationship(provider('Alpha'), facility(MAIN), null);
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(terminateRow(MAIN, '', 'x'.repeat(256)));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.TERMINATED, result.outcome, 'Still terminated: ' + result.errors);
+        Assert.areEqual(RosterIntakeIssues.INVALID_VALUE.code, result.warnings[0].code, 'Code');
+        Assert.areEqual(RelationshipCsvMapping.TERMINATION_NOTES_HEADER, result.warnings[0].column, 'Column');
+        Assert.isNull(RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0].Termination_Notes__c, 'Not written');
     }
 }

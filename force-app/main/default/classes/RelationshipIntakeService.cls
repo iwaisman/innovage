@@ -4,8 +4,19 @@
  * relationships at facilities of the roster's Organization scope.
  *
  * A relationship is a HealthcarePractitionerFacility (HPF) linking the
- * Provider's HealthcareProvider to the facility's HealthcareFacility. It is
- * ACTIVE when IsActive is true and TerminationDate is blank.
+ * Provider's HealthcareProvider to the facility's HealthcareFacility. For
+ * intake it is ACTIVE when it has not ended: TerminationDate is blank or after
+ * the run date (decided 2026-11-06). This follows the org's Active__c formula
+ * (started, and not past its TerminationDate) except that:
+ *   - an HPF that starts in the future counts as active, so a create row does
+ *     not duplicate it and a terminate row can end it;
+ *   - an HPF whose TerminationDate is the run date counts as ended, although
+ *     Active__c stays true through that day, so a same-day re-run does not
+ *     terminate it again or treat it as existing.
+ *
+ * IsActive is neither read nor written (decided 2026-11-06). The org's
+ * Provider_Plan_Participation flows react to IsActive only, so intake no
+ * longer triggers them.
  *
  *     Terminate blank   no active HPF  -> insert one                       INSERTED
  *                       active HPF     -> update the relationship fields
@@ -14,19 +25,28 @@
  *                                         or nothing; the start date is
  *                                         only set on insert (warning if
  *                                         the file gives one)              UNCHANGED
- *     Terminate Single  active HPF     -> IsActive = false, TerminationDate TERMINATED
+ *     Terminate Single  active HPF     -> TerminationDate = the file's      TERMINATED
+ *                                         Termination Date, or the run
+ *                                         date; Termination_Notes__c if
+ *                                         given (UNCHANGED if both already
+ *                                         had these values)
  *                       none           -> nothing (warning)                UNCHANGED
  *     Terminate All     every active HPF of the Provider at an in-scope
  *                       facility is terminated; facility columns ignored   TERMINATED / UNCHANGED
  *
+ * A termination may be dated in the past or the future (decided 2026-11-06).
+ * One dated after the run date leaves the HPF active (for intake and for
+ * Active__c) until that date; terminating it again replaces the date. A
+ * termination dated before an HPF's start date is an error, and a Terminate
+ * All row then terminates nothing. Termination Date and Termination Notes on
+ * a create row are an error; a malformed Termination Date is an error.
+ *
  * On a create row, a malformed start date is an error, so the row can be
- * corrected rather than ingested without its date. Terminate rows ignore the
+ * corrected rather than ingested without its date. A blank one becomes the
+ * run date on a new HPF, since Active__c is never true without a start date. Terminate rows ignore the
  * start date and the relationship field columns, with a warning. A terminated relationship is never reactivated: a
  * Provider who returns to a facility gets a new HPF. Several active HPFs for
  * one pair are an anomaly: rows touching them warn so it can be investigated.
- *
- * Terminations set IsActive as well as TerminationDate: the org's
- * Provider_Plan_Participation flows react to IsActive only.
  *
  * ROWS TOUCHING THE SAME RELATIONSHIP: nothing in the database makes a
  * (Provider, facility) pair unique, so ingestAll() keeps a ledger of the
@@ -116,7 +136,7 @@ public with sharing class RelationshipIntakeService {
         matchProviders(states);
         matchFacilities(states, context);
 
-        Ledger ledger = new Ledger(queryRelationships(states), context.organizationScope);
+        Ledger ledger = new Ledger(queryRelationships(states, context.runDate), context.organizationScope);
         for (RowState state : states) {
             if (!state.result.isError()) {
                 plan(state, ledger, context.runDate);
@@ -155,6 +175,12 @@ public with sharing class RelationshipIntakeService {
             }
 
             if (mapped.action == RelationshipCsvMapping.Action.CREATE) {
+                if (mapped.hasTerminationValues()) {
+                    result.fail(RosterIntakeIssues.TERMINATION_COLUMNS_ON_CREATE_ROW,
+                        'Termination Date and Termination Notes are only used when Terminate is "Single" or "All"; ' +
+                        'this row has Terminate blank, so nothing was created.');
+                    return;
+                }
                 for (RosterIntakeRow.Warning warning : mapped.warnings) {
                     result.warn(warning);
                 }
@@ -163,6 +189,15 @@ public with sharing class RelationshipIntakeService {
                         '" is not a valid MM/DD/YYYY date.');
                 }
                 return;
+            }
+
+            if (mapped.hasInvalidTerminationDate()) {
+                result.fail(RosterIntakeIssues.INVALID_TERMINATION_DATE, 'Termination Date "' + mapped.rawTerminationDate +
+                    '" is not a valid MM/DD/YYYY date.');
+                return;
+            }
+            if (mapped.terminationNotesWarning != null) {
+                result.warn(mapped.terminationNotesWarning);
             }
 
             // A termination uses neither the start date nor (for All) the facility columns.
@@ -270,7 +305,7 @@ public with sharing class RelationshipIntakeService {
      * The active relationships of the slice's Providers. Terminated ones are never
      * changed, so they are not needed.
      */
-    private static List<HealthcarePractitionerFacility> queryRelationships(List<RowState> states) {
+    private static List<HealthcarePractitionerFacility> queryRelationships(List<RowState> states, Date runDate) {
         Set<Id> healthcareProviderIds = new Set<Id>();
         for (RowState state : states) {
             if (!state.result.isError()) {
@@ -284,7 +319,7 @@ public with sharing class RelationshipIntakeService {
         // Their names come from Schema tokens, never from the file.
         Set<String> fields = new Set<String>{
             'Id', 'HealthcareProviderId', 'HealthcareFacilityId', 'HealthcareFacility.Name',
-            'HealthcareFacility.Legal_Owner__c', 'InitialStartDate'
+            'HealthcareFacility.Legal_Owner__c', 'InitialStartDate', 'TerminationDate', 'Termination_Notes__c'
         };
         for (ProviderCsvMapping.FieldMapping mapping : RelationshipCsvMapping.RELATIONSHIP_MAPPINGS) {
             fields.add(mapping.getFieldName());
@@ -292,9 +327,10 @@ public with sharing class RelationshipIntakeService {
         return (List<HealthcarePractitionerFacility>) Database.queryWithBinds(
             'SELECT ' + String.join(new List<String>(fields), ', ') +
             ' FROM HealthcarePractitionerFacility' +
-            ' WHERE HealthcareProviderId IN :healthcareProviderIds AND IsActive = TRUE AND TerminationDate = NULL' +
+            ' WHERE HealthcareProviderId IN :healthcareProviderIds' +
+            ' AND (TerminationDate = NULL OR TerminationDate > :runDate)' +
             ' ORDER BY CreatedDate, Id',
-            new Map<String, Object>{ 'healthcareProviderIds' => healthcareProviderIds },
+            new Map<String, Object>{ 'healthcareProviderIds' => healthcareProviderIds, 'runDate' => runDate },
             AccessLevel.SYSTEM_MODE
         );
     }
@@ -305,9 +341,14 @@ public with sharing class RelationshipIntakeService {
      */
     private static void plan(RowState state, Ledger ledger, Date runDate) {
         RosterIntakeRow.Result result = state.result;
+        Termination termination = new Termination(
+            state.mapped.terminationDate ?? runDate,
+            state.mapped.terminationNotes,
+            runDate
+        );
         switch on state.mapped.action {
             when CREATE {
-                planCreate(state, ledger);
+                planCreate(state, ledger, runDate);
             }
             when TERMINATE_SINGLE {
                 Pair pair = ledger.find(state.healthcareProviderId(), state.healthcareFacilityId());
@@ -317,21 +358,30 @@ public with sharing class RelationshipIntakeService {
                     result.succeed(RosterIntakeRow.Outcome.UNCHANGED);
                     return;
                 }
+                if (failIfBeforeStart(new List<Pair>{ pair }, termination, state)) {
+                    return;
+                }
                 warnIfSeveralActive(pair, state, result, 'all were terminated');
-                pair.terminate(runDate, result);
-                result.succeed(RosterIntakeRow.Outcome.TERMINATED);
+                Boolean changed = pair.terminate(termination, result);
+                result.succeed(changed ? RosterIntakeRow.Outcome.TERMINATED : RosterIntakeRow.Outcome.UNCHANGED);
             }
             when TERMINATE_ALL {
-                Boolean terminatedAny = false;
+                List<Pair> pairs = new List<Pair>();
                 for (Pair pair : ledger.pairsOf(state.healthcareProviderId())) {
                     if (pair.inScope && !pair.active.isEmpty()) {
-                        warnIfSeveralActive(pair, state, result, 'all were terminated');
-                        pair.terminate(runDate, result);
-                        terminatedAny = true;
+                        pairs.add(pair);
                     }
                 }
-                if (terminatedAny) {
-                    result.succeed(RosterIntakeRow.Outcome.TERMINATED);
+                if (failIfBeforeStart(pairs, termination, state)) {
+                    return;
+                }
+                Boolean changed = false;
+                for (Pair pair : pairs) {
+                    warnIfSeveralActive(pair, state, result, 'all were terminated');
+                    changed = pair.terminate(termination, result) || changed;
+                }
+                if (!pairs.isEmpty()) {
+                    result.succeed(changed ? RosterIntakeRow.Outcome.TERMINATED : RosterIntakeRow.Outcome.UNCHANGED);
                 } else {
                     result.warn(RosterIntakeIssues.NO_ACTIVE_RELATIONSHIP, null, 'Provider "' + state.provider.Name +
                         '" has no active relationships at facilities of this Organization; nothing was terminated.');
@@ -341,7 +391,7 @@ public with sharing class RelationshipIntakeService {
         }
     }
 
-    private static void planCreate(RowState state, Ledger ledger) {
+    private static void planCreate(RowState state, Ledger ledger, Date runDate) {
         RosterIntakeRow.Result result = state.result;
         Date startDate = state.mapped.startDate;
         Pair pair = ledger.findOrAdd(
@@ -351,7 +401,7 @@ public with sharing class RelationshipIntakeService {
         );
 
         if (pair.active.isEmpty()) {
-            ledger.addNew(pair, newRelationship(state), result);
+            ledger.addNew(pair, newRelationship(state, runDate), result);
             result.succeed(RosterIntakeRow.Outcome.INSERTED);
             return;
         }
@@ -401,22 +451,62 @@ public with sharing class RelationshipIntakeService {
 
     /*
      * Only these fields are set (decided 2026-10-18): not AccountId or PractitionerId
-     * (the older Health Cloud link fields), Predecessor_Record__c, EffectiveFrom or
-     * EffectiveTo.
+     * (the older Health Cloud link fields), Predecessor_Record__c, EffectiveFrom,
+     * EffectiveTo or IsActive.
      */
-    private static HealthcarePractitionerFacility newRelationship(RowState state) {
+    private static HealthcarePractitionerFacility newRelationship(RowState state, Date runDate) {
         HealthcarePractitionerFacility relationship = new HealthcarePractitionerFacility(
             Name = (state.provider.Name + ' @ ' + state.facility.Name).left(255),
             HealthcareProviderId = state.healthcareProviderId(),
             HealthcareFacilityId = state.healthcareFacilityId(),
-            // IsActive defaults to false; the Provider_Plan_Participation_AutoCreate flow needs it true.
-            IsActive = true,
-            InitialStartDate = state.mapped.startDate
+            // Active__c needs a start date; a blank one becomes the run date.
+            InitialStartDate = state.mapped.startDate ?? runDate
         );
         for (Schema.SObjectField field : state.mapped.valuesByField.keySet()) {
             relationship.put(field, state.mapped.valuesByField.get(field));
         }
         return relationship;
+    }
+
+    /*
+     * What a terminate row sets: the end date (the file's Termination Date, or the
+     * run date) and the notes (null when the file gives none).
+     */
+    private class Termination {
+        Date endDate;
+        String notes;
+        Date runDate;
+
+        Termination(Date endDate, String notes, Date runDate) {
+            this.endDate = endDate;
+            this.notes = notes;
+            this.runDate = runDate;
+        }
+
+        /* Whether the relationship has ended for intake once terminated (see the class comment). */
+        Boolean endsByRunDate() {
+            return endDate <= runDate;
+        }
+    }
+
+    /*
+     * A termination may not end a relationship before it starts (decided 2026-11-06).
+     * Checks every relationship the row would end before ending any, so a Terminate
+     * All row is all or nothing. Returns whether the row failed.
+     */
+    private static Boolean failIfBeforeStart(List<Pair> pairs, Termination termination, RowState state) {
+        for (Pair pair : pairs) {
+            for (Entry entry : pair.active) {
+                Date startDate = entry.record.InitialStartDate;
+                if (startDate != null && termination.endDate < startDate) {
+                    state.result.fail(RosterIntakeIssues.TERMINATION_BEFORE_START, 'Provider "' + state.provider.Name +
+                        '"\'s relationship with facility "' + pair.facilityName + '" starts on ' + startDate.format() +
+                        ', so it cannot end on ' + termination.endDate.format() + '. Nothing was terminated.');
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /*
@@ -480,12 +570,28 @@ public with sharing class RelationshipIntakeService {
             this.facilityName = facilityName;
         }
 
-        void terminate(Date runDate, RosterIntakeRow.Result result) {
+        /*
+         * Ends the pair's active relationships as the termination says; returns
+         * whether anything changed (a re-run with the same date and notes changes
+         * nothing). A relationship ending after the run date stays active until then,
+         * for later rows of the slice as for later runs.
+         */
+        Boolean terminate(Termination termination, RosterIntakeRow.Result result) {
+            Boolean changed = false;
             for (Entry entry : active) {
-                entry.set(HealthcarePractitionerFacility.IsActive, false, result);
-                entry.set(HealthcarePractitionerFacility.TerminationDate, runDate, result);
+                if (entry.record.TerminationDate != termination.endDate) {
+                    entry.set(HealthcarePractitionerFacility.TerminationDate, termination.endDate, result);
+                    changed = true;
+                }
+                if (termination.notes != null && !termination.notes.equals(entry.record.Termination_Notes__c)) {
+                    entry.set(HealthcarePractitionerFacility.Termination_Notes__c, termination.notes, result);
+                    changed = true;
+                }
             }
-            active.clear();
+            if (termination.endsByRunDate()) {
+                active.clear();
+            }
+            return changed;
         }
     }
 
@@ -511,7 +617,7 @@ public with sharing class RelationshipIntakeService {
             }
         }
 
-        /* Active means IsActive and no TerminationDate; only active relationships are loaded. */
+        /* Only active relationships (not ended; see the class comment) are loaded. */
         Pair find(Id healthcareProviderId, Id healthcareFacilityId) {
             return pairsByKey.get(healthcareProviderId + ':' + healthcareFacilityId);
         }

@@ -52,6 +52,13 @@ what would change if the answer is different.
 
 ### 2.1 What counts as an active relationship
 
+> **Resolved 2026-11-06.** Intake ignores `IsActive` (never reads or writes it).
+> A relationship is active for intake when its `TerminationDate` is blank or
+> after the run date; a blank start date on a create row becomes the run date,
+> because the org's new `Active__c` formula needs one. See
+> [docs/architecture/roster-intake.md](../architecture/roster-intake.md),
+> section 7. The notes below describe the earlier, provisional rule.
+
 - **Today:** a relationship is active when `IsActive = true` **and**
   `TerminationDate` is blank.
 - **Unsure because:** decided "for now"; the org has no existing relationships

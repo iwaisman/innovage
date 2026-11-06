@@ -114,6 +114,16 @@ public inherited sharing class RosterIntakeIssues {
         'Terminate is not blank, Single or All (RelationshipIntakeService).');
     public static final Issue INVALID_START_DATE = new Issue('INVALID_START_DATE', SEVERITY_ERROR, FileType.RELATIONSHIPS,
         'A create row has a malformed Relationship Start Date (RelationshipIntakeService).');
+    public static final Issue TERMINATION_COLUMNS_ON_CREATE_ROW = new Issue(
+        'TERMINATION_COLUMNS_ON_CREATE_ROW', SEVERITY_ERROR, FileType.RELATIONSHIPS,
+        'A create row (Terminate blank) gives a Termination Date or Termination Notes (RelationshipIntakeService).');
+    public static final Issue INVALID_TERMINATION_DATE = new Issue(
+        'INVALID_TERMINATION_DATE', SEVERITY_ERROR, FileType.RELATIONSHIPS,
+        'A terminate row has a malformed Termination Date (RelationshipIntakeService).');
+    public static final Issue TERMINATION_BEFORE_START = new Issue(
+        'TERMINATION_BEFORE_START', SEVERITY_ERROR, FileType.RELATIONSHIPS,
+        'A termination would end a relationship before its start date; with Terminate = All, nothing is '
+        + 'terminated if any relationship would (RelationshipIntakeService).');
     public static final Issue START_DATE_IGNORED = new Issue('START_DATE_IGNORED', SEVERITY_WARNING, FileType.RELATIONSHIPS,
         'A terminate row gives a Relationship Start Date, which terminations ignore (RelationshipIntakeService).');
     public static final Issue RELATIONSHIP_COLUMNS_IGNORED = new Issue(
@@ -179,6 +189,7 @@ public inherited sharing class RosterIntakeIssues {
         MISSING_LAST_NAME, LAST_NAME_DIFFERS, INVALID_VALUE, ADDRESS_NOT_UPDATED, HEALTHCARE_PROVIDER_NOT_SAVED,
         UNKNOWN_SPECIALTY, AMBIGUOUS_SPECIALTY, SPECIALTY_NOT_SAVED,
         INVALID_TERMINATE_VALUE, INVALID_START_DATE, START_DATE_IGNORED, FACILITY_COLUMNS_IGNORED,
+        TERMINATION_COLUMNS_ON_CREATE_ROW, INVALID_TERMINATION_DATE, TERMINATION_BEFORE_START,
         RELATIONSHIP_COLUMNS_IGNORED,
         UNKNOWN_PROVIDER, PROVIDER_NOT_SET_UP,
         NO_FACILITY_KEY_VALUES, MALFORMED_FACILITY_UNIQUE_ID, MALFORMED_FACILITY_NPI, UNKNOWN_FACILITY_UNIQUE_ID,

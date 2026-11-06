@@ -397,7 +397,13 @@ Details are in
 A relationship is a `HealthcarePractitionerFacility` (HPF) linking a Provider's
 `HealthcareProvider` (found through `Account.Healthcare_Provider__c`) to a
 facility's `HealthcareFacility` (found through `Account.Healthcare_Facility__c`).
-It is **active** when `IsActive` is true and `TerminationDate` is blank.
+For intake it is **active** when it has not ended: `TerminationDate` is blank
+or after the run date (decided 2026-11-06). This follows the org's `Active__c`
+formula (started, and not past `TerminationDate`) except that an HPF starting
+in the future counts as active (so it is not duplicated and can be terminated),
+and one whose `TerminationDate` is the run date counts as ended (so a same-day
+re-run neither terminates it again nor treats it as existing). `IsActive` is
+neither read nor written.
 HealthcareFacility is assumed to be one-to-one with its facility Account, so
 the pointer is the only link considered.
 
@@ -424,7 +430,10 @@ For a list of rows it:
    other than blank, Single or All is an error (INVALID_TERMINATE_VALUE). On a
    create row, a malformed start date is an error too (INVALID_START_DATE), so
    the user can correct it. Terminate rows ignore the start date, with a
-   START_DATE_IGNORED warning if one is given. A Terminate All row with facility
+   START_DATE_IGNORED warning if one is given. Termination Date and Termination
+   Notes are for terminate rows only: on a create row they are an error
+   (TERMINATION_COLUMNS_ON_CREATE_ROW); a malformed Termination Date is an error
+   (INVALID_TERMINATION_DATE). A Terminate All row with facility
    columns filled in gets a FACILITY_COLUMNS_IGNORED warning.
 2. **Matches Providers** with `ProviderMatcher.matchAll`, as for the provider
    file, except that NO_MATCH is an error (UNKNOWN_PROVIDER: this file never
@@ -454,9 +463,9 @@ For a list of rows it:
 
    | Terminate | Ledger state | Result | Outcome |
    |---|---|---|---|
-   | blank | no active HPF | New HPF: Name "Provider @ Facility", both links, `IsActive = true`, `InitialStartDate` and the relationship fields (`RelationshipCsvMapping.RELATIONSHIP_MAPPINGS`: Limitations, Scheduling URL, Telemedicine) from the file. Nothing else is set (not `AccountId`, `PractitionerId`, `Predecessor_Record__c`, `EffectiveFrom` or `EffectiveTo`). A Provider who returns to a facility gets a new HPF; the terminated one is left as it is | INSERTED |
+   | blank | no active HPF | New HPF: Name "Provider @ Facility", both links, `InitialStartDate` (the run date if the file's is blank, since `Active__c` needs one) and the relationship fields (`RelationshipCsvMapping.RELATIONSHIP_MAPPINGS`: Limitations, Scheduling URL, Telemedicine) from the file. Nothing else is set (not `AccountId`, `PractitionerId`, `Predecessor_Record__c`, `EffectiveFrom` or `EffectiveTo`). A Provider who returns to a facility gets a new HPF; the terminated one is left as it is | INSERTED |
    | blank | active HPF | The relationship fields that differ (compared exactly; blank values change nothing) are updated, as each mapping's update policy allows. The start date is only written when an HPF is created: a file date that differs from the stored one, or is given when none is stored, gets a START_DATE_DIFFERS warning | UPDATED / UNCHANGED |
-   | Single | active HPF | `IsActive = false`, `TerminationDate` = run date | TERMINATED |
+   | Single | active HPF | `TerminationDate` = the file's Termination Date, or the run date; `Termination_Notes__c` = the file's notes if given. A date before an HPF's start date is a TERMINATION_BEFORE_START error (for All, checked for every HPF before ending any). An HPF ending after the run date stays active in the ledger | TERMINATED (UNCHANGED if it already had both) |
    | Single | none | Nothing; NO_ACTIVE_RELATIONSHIP warning | UNCHANGED |
    | All | — | Terminate every active HPF of the Provider at an in-scope facility; if none, NO_ACTIVE_RELATIONSHIP warning | TERMINATED / UNCHANGED |
 
@@ -471,10 +480,12 @@ For a list of rows it:
    one insert, in system mode. A row whose record fails to save
    becomes a SAVE_ERROR.
 
-Terminations set `IsActive` as well as `TerminationDate`, and new HPFs are
-created with `IsActive = true` (the field defaults to false). This matters
-because the org's `Provider_Plan_Participation_AutoCreate` and
-`Provider_Plan_Participation_AutoEndDate` flows react to `IsActive` only.
+Intake does not set `IsActive` (decided 2026-11-06), so new HPFs keep its
+default (false) and terminations leave it as it is. The org's
+`Provider_Plan_Participation_AutoCreate` and
+`Provider_Plan_Participation_AutoEndDate` flows react to `IsActive` only, so
+creating or terminating a relationship through intake no longer creates or ends
+a Provider Plan Participation.
 
 ### 7.3 Rows that touch the same relationship
 

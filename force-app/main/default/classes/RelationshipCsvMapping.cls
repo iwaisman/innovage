@@ -23,6 +23,19 @@ public inherited sharing class RelationshipCsvMapping {
     public static final String SCHEDULING_URL_HEADER = 'Practitioner Scheduling URL';
     public static final String TELEMEDICINE_HEADER = 'Telemedicine Capability';
 
+    /* Optional columns, used only by terminate rows; a create row that fills them in is an error. */
+    public static final String TERMINATION_DATE_HEADER = 'Termination Date';
+    public static final String TERMINATION_NOTES_HEADER = 'Termination Notes';
+
+    /*
+     * Termination Notes is checked like a relationship field (only its length can
+     * fail), but written by terminations only, overwriting any stored notes.
+     */
+    public static final ProviderCsvMapping.FieldMapping TERMINATION_NOTES_MAPPING = new ProviderCsvMapping.FieldMapping(
+        TERMINATION_NOTES_HEADER, HealthcarePractitionerFacility.Termination_Notes__c,
+        ProviderCsvMapping.ValueType.TEXT, ProviderCsvMapping.UpdatePolicy.OVERWRITE
+    );
+
     /**
      * Every column is required in the header, although any value may be blank,
      * so a misspelt header fails the file instead of silently reading as blank.
@@ -95,10 +108,29 @@ public inherited sharing class RelationshipCsvMapping {
         /** The RELATIONSHIP_MAPPINGS headers with a value, valid or not. */
         public List<String> relationshipColumnsGiven { get; private set; }
 
+        /** Null when blank or invalid. */
+        public Date terminationDate { get; private set; }
+        /** The Termination Date as supplied (trimmed), or null. */
+        public String rawTerminationDate { get; private set; }
+        /** Valid Termination Notes (trimmed); null when blank or too long. */
+        public String terminationNotes { get; private set; }
+        /** Why the Termination Notes were ignored (too long), or null. */
+        public RosterIntakeRow.Warning terminationNotesWarning { get; private set; }
+        private Boolean hasTerminationNotes = false;
+
         private MappedRow() {
             valuesByField = new Map<Schema.SObjectField, Object>();
             warnings = new List<RosterIntakeRow.Warning>();
             relationshipColumnsGiven = new List<String>();
+        }
+
+        public Boolean hasInvalidTerminationDate() {
+            return String.isNotBlank(rawTerminationDate) && terminationDate == null;
+        }
+
+        /** Whether the Termination Date or Termination Notes column has a value, valid or not. */
+        public Boolean hasTerminationValues() {
+            return String.isNotBlank(rawTerminationDate) || hasTerminationNotes;
         }
 
         public Boolean hasInvalidStartDate() {
@@ -135,6 +167,21 @@ public inherited sharing class RelationshipCsvMapping {
         mapped.action = String.isBlank(mapped.terminateValue)
             ? Action.CREATE
             : ACTIONS_BY_TERMINATE_VALUE.get(mapped.terminateValue.toLowerCase());
+
+        mapped.rawTerminationDate = row.get(TERMINATION_DATE_HEADER)?.trim();
+        mapped.terminationDate = ProviderCsvMapping.parseDate(mapped.rawTerminationDate);
+        String rawNotes = row.get(TERMINATION_NOTES_HEADER)?.trim();
+        if (String.isNotBlank(rawNotes)) {
+            mapped.hasTerminationNotes = true;
+            ProviderCsvMapping.CheckedValue checked = ProviderCsvMapping.check(TERMINATION_NOTES_MAPPING, rawNotes);
+            if (checked.invalidReason != null) {
+                mapped.terminationNotesWarning = new RosterIntakeRow.Warning(
+                    RosterIntakeIssues.INVALID_VALUE, TERMINATION_NOTES_HEADER, 'Ignored: ' + checked.invalidReason + '.'
+                );
+            } else {
+                mapped.terminationNotes = (String) checked.value;
+            }
+        }
 
         for (ProviderCsvMapping.FieldMapping mapping : RELATIONSHIP_MAPPINGS) {
             String header = mapping.headers[0];
