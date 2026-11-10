@@ -21,10 +21,10 @@
  *     Terminate blank   no active HPF  -> insert one                       INSERTED
  *                       active HPF     -> update the relationship fields
  *                                         that differ (RELATIONSHIP_
- *                                         MAPPINGS)                        UPDATED
- *                                         or nothing; the start date is
- *                                         only set on insert (warning if
- *                                         the file gives one)              UNCHANGED
+ *                                         MAPPINGS), and the start date if
+ *                                         the HPF has not started yet      UPDATED
+ *                                         or nothing (a start date that
+ *                                         can't be changed gets a warning) UNCHANGED
  *     Terminate Single  active HPF     -> TerminationDate = the file's      TERMINATED
  *                                         Termination Date, or the run
  *                                         date; Termination_Notes__c if
@@ -407,20 +407,50 @@ public with sharing class RelationshipIntakeService {
         }
 
         // Already active (in the database, or created by an earlier row of this slice).
-        // The start date is only ever set when a relationship is created.
         warnIfSeveralActive(pair, state, result, 'no new one was created');
-        Date storedStartDate = pair.active[0].record.InitialStartDate;
-        if (startDate != null && storedStartDate == null) {
-            result.warn(RosterIntakeIssues.START_DATE_DIFFERS, RelationshipCsvMapping.START_DATE_HEADER,
-                'The relationship already exists without a start date; the file\'s ' + startDate.format() +
-                ' was not applied (start dates are only set when a relationship is created).');
-        } else if (startDate != null && startDate != storedStartDate) {
-            result.warn(RosterIntakeIssues.START_DATE_DIFFERS, RelationshipCsvMapping.START_DATE_HEADER,
-                'The relationship already exists with start date ' + storedStartDate.format() +
-                '; the file\'s ' + startDate.format() + ' was not applied.');
-        }
-        Boolean changed = updateRelationshipFields(pair, state);
+        Boolean changed = updateStartDate(pair, state, runDate);
+        changed = updateRelationshipFields(pair, state) || changed;
         result.succeed(changed ? RosterIntakeRow.Outcome.UPDATED : RosterIntakeRow.Outcome.UNCHANGED);
+    }
+
+    /*
+     * A start date can be changed only before the relationship starts (decided
+     * 2026-11-06): when the stored one is after the run date, a different date in
+     * the file replaces it, unless the relationship would then start after its
+     * Termination Date. Otherwise a different date gets a START_DATE_DIFFERS
+     * warning and is not applied. Returns whether anything changed.
+     */
+    private static Boolean updateStartDate(Pair pair, RowState state, Date runDate) {
+        Date incoming = state.mapped.startDate;
+        if (incoming == null) {
+            return false;
+        }
+        RosterIntakeRow.Result result = state.result;
+        Boolean changed = false;
+        for (Entry entry : pair.active) {
+            Date stored = entry.record.InitialStartDate;
+            Date endDate = entry.record.TerminationDate;
+            if (incoming == stored) {
+                continue;
+            }
+            if (stored == null) {
+                result.warn(RosterIntakeIssues.START_DATE_DIFFERS, RelationshipCsvMapping.START_DATE_HEADER,
+                    'The relationship already exists without a start date; the file\'s ' + incoming.format() +
+                    ' was not applied (a start date can only be changed before the relationship starts).');
+            } else if (stored <= runDate) {
+                result.warn(RosterIntakeIssues.START_DATE_DIFFERS, RelationshipCsvMapping.START_DATE_HEADER,
+                    'The relationship already started on ' + stored.format() + '; the file\'s ' + incoming.format() +
+                    ' was not applied (a start date can only be changed before the relationship starts).');
+            } else if (endDate != null && incoming > endDate) {
+                result.warn(RosterIntakeIssues.START_DATE_DIFFERS, RelationshipCsvMapping.START_DATE_HEADER,
+                    'The relationship ends on ' + endDate.format() + ', so it cannot start on ' + incoming.format() +
+                    '; its start date ' + stored.format() + ' was kept.');
+            } else {
+                entry.set(HealthcarePractitionerFacility.InitialStartDate, incoming, result);
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     /*

@@ -148,7 +148,7 @@ private class RelationshipIntakeServiceTest {
 
         Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, result.outcome, 'Errors: ' + result.errors);
         Assert.isTrue(hasWarning(result, RosterIntakeIssues.START_DATE_DIFFERS.code), 'Warns it was not applied: ' + result.warnings);
-        Assert.isTrue(result.warnings[0].message.contains('start dates are only set when a relationship is created'), 'Says why: ' + result.warnings[0].message);
+        Assert.isTrue(result.warnings[0].message.contains('a start date can only be changed before the relationship starts'), 'Says why: ' + result.warnings[0].message);
         Assert.isNull(RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0].InitialStartDate, 'Only set when created');
     }
 
@@ -900,5 +900,94 @@ private class RelationshipIntakeServiceTest {
         Assert.areEqual(RosterIntakeIssues.INVALID_VALUE.code, result.warnings[0].code, 'Code');
         Assert.areEqual(RelationshipCsvMapping.TERMINATION_NOTES_HEADER, result.warnings[0].column, 'Column');
         Assert.isNull(RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0].Termination_Notes__c, 'Not written');
+    }
+
+    // ─── Start date on an existing relationship ────────────────────────
+
+    private static HealthcarePractitionerFacility startingIn(Integer days, Date terminationDate) {
+        HealthcarePractitionerFacility relationship = RelationshipTestDataFactory.createRelationship(
+            provider('Alpha'), facility(MAIN), terminationDate
+        );
+        update new HealthcarePractitionerFacility(Id = relationship.Id, InitialStartDate = Date.today().addDays(days));
+        return relationship;
+    }
+
+    private static Map<String, String> createRowStarting(Date startDate) {
+        Map<String, String> row = createRow(MAIN);
+        row.put(RelationshipCsvMapping.START_DATE_HEADER, mmddyyyy(startDate));
+        return row;
+    }
+
+    @IsTest
+    static void shouldChangeStartDate_WhenNotStartedYet() {
+        startingIn(30, null);
+        Date earlier = Date.today().addDays(10);
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(createRowStarting(earlier));
+        RosterIntakeRow.Result again = ingest(createRowStarting(earlier));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.UPDATED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(0, result.warnings.size(), 'No warning: ' + result.warnings);
+        Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, again.outcome, 'Same date again');
+        Assert.areEqual(earlier, RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0].InitialStartDate, 'Moved');
+    }
+
+    @IsTest
+    static void shouldChangeStartDateToPast_WhenNotStartedYet() {
+        startingIn(30, null);
+        Date lastWeek = Date.today().addDays(-7);
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(createRowStarting(lastWeek));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.UPDATED, result.outcome, 'Errors: ' + result.errors);
+        HealthcarePractitionerFacility relationship = RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0];
+        Assert.areEqual(lastWeek, relationship.InitialStartDate, 'Back-dated');
+        Assert.isTrue(relationship.Active__c, 'So now active');
+    }
+
+    @IsTest
+    static void shouldKeepStartDate_WhenAlreadyStarted() {
+        startingIn(-10, null);
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(createRowStarting(Date.today().addDays(-20)));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(RosterIntakeIssues.START_DATE_DIFFERS.code, result.warnings[0].code, 'Warns');
+        Assert.areEqual(Date.today().addDays(-10), RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0].InitialStartDate, 'Kept');
+    }
+
+    @IsTest
+    static void shouldKeepStartDate_WhenItWouldFollowTermination() {
+        startingIn(30, Date.today().addDays(60));
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(createRowStarting(Date.today().addDays(90)));
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.UNCHANGED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(RosterIntakeIssues.START_DATE_DIFFERS.code, result.warnings[0].code, 'Warns');
+        Assert.isTrue(result.warnings[0].message.contains('so it cannot start on'), 'Says why: ' + result.warnings[0].message);
+        Assert.areEqual(Date.today().addDays(30), RelationshipTestDataFactory.relationshipsOf(provider('Alpha'))[0].InitialStartDate, 'Kept');
+    }
+
+    @IsTest
+    static void shouldUpdateOtherFields_WhenStartDateKept() {
+        startingIn(-10, null);
+        Map<String, String> row = createRowStarting(Date.today().addDays(-20));
+        row.put(RelationshipCsvMapping.LIMITATIONS_HEADER, 'Adults only');
+
+        Test.startTest();
+        RosterIntakeRow.Result result = ingest(row);
+        Test.stopTest();
+
+        Assert.areEqual(RosterIntakeRow.Outcome.UPDATED, result.outcome, 'Errors: ' + result.errors);
+        Assert.areEqual(RosterIntakeIssues.START_DATE_DIFFERS.code, result.warnings[0].code, 'Start date warning');
+        Assert.areEqual('Adults only', fieldsOf('Alpha').Limitations__c, 'Other fields still updated');
     }
 }

@@ -51,7 +51,7 @@ ACTIVE RELATIONSHIP
 ACTIONS
 
 - Terminate blank: create.
-  No active relationship: one is created, with the start date (the run date if blank) and the relationship fields if given - Inserted. Already active: relationship fields that differ are updated - Updated; otherwise nothing changes - Unchanged. The start date is never changed. A Provider who left and returns gets a new relationship; the old one is kept as it is.
+  No active relationship: one is created, with the start date (the run date if blank) and the relationship fields if given - Inserted. Already active: relationship fields that differ are updated - Updated; otherwise nothing changes - Unchanged. The start date can only be changed before the relationship starts: if its stored start date is after the run date, a different one in the file replaces it (Updated), unless the relationship would then start after its Termination Date. Otherwise a different start date gets warning START_DATE_DIFFERS and is not applied. A Provider who left and returns gets a new relationship; the old one is kept as it is.
 
 - Terminate = Single: end one relationship.
   The active relationship's Termination Date is set to the file's Termination Date, or the run date if blank, and its Termination Notes to the file's if given - Terminated (Unchanged if it already had both). A relationship whose Termination Date is the run date or earlier has ended for intake (by the Active__c formula it stays active through that date); one dated later stays active until then. None active: nothing changes, warning NO_ACTIVE_RELATIONSHIP - Unchanged.

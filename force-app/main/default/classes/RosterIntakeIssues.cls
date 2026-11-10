@@ -178,8 +178,9 @@ public inherited sharing class RosterIntakeIssues {
         'MULTIPLE_ACTIVE_RELATIONSHIPS', SEVERITY_WARNING, FileType.RELATIONSHIPS,
         'Several active relationships exist for one Provider and facility (RelationshipIntakeService).');
     public static final Issue START_DATE_DIFFERS = new Issue('START_DATE_DIFFERS', SEVERITY_WARNING, FileType.RELATIONSHIPS,
-        'A create row\'s start date differs from the existing active relationship\'s; nothing is changed '
-        + '(RelationshipIntakeService).');
+        'A create row\'s start date differs from the existing active relationship\'s and cannot replace it: '
+        + 'the relationship has already started (or has no start date), or would then start after its '
+        + 'Termination Date (RelationshipIntakeService.updateStartDate).');
 
     /** Every entry above. */
     public static final List<Issue> ALL = new List<Issue>{

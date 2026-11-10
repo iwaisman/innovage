@@ -4,5 +4,8 @@
     "**/bower_components": true,
     "**/.sf": true,
     "**/.sfdx": true
+  },
+  "files.watcherExclude": {
+    "**/target/**": true
   }
 }
