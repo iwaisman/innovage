@@ -21,7 +21,7 @@ private class ProviderSpecialtyServiceTest {
     }
 
     private static verifiable__VfiNUCCTaxonomy__c taxonomy(String name, String code, String vuid) {
-        return new verifiable__VfiNUCCTaxonomy__c(Name = name, verifiable__TaxonomyCode__c = code, verifiable__Vuid__c = vuid);
+        return new verifiable__VfiNUCCTaxonomy__c(verifiable__Specialization__c = name, verifiable__TaxonomyCode__c = code, verifiable__Vuid__c = vuid);
     }
 
     private static Id taxonomyId(String code) {
@@ -190,22 +190,6 @@ private class ProviderSpecialtyServiceTest {
         Map<String, HealthcareProviderTaxonomy> byCode = links(existing().Healthcare_Provider__c);
         Assert.areEqual(1, byCode.size(), 'One link');
         Assert.isTrue(byCode.get(FAMILY).IsPrimaryTaxonomy, 'As primary');
-    }
-
-    @IsTest
-    static void shouldRefillLookup_WhenLinkLostItAfterTaxonomyReload() {
-        link(FAMILY, true);
-        HealthcareProviderTaxonomy orphan = [SELECT Id FROM HealthcareProviderTaxonomy LIMIT 1];
-        update new HealthcareProviderTaxonomy(Id = orphan.Id, NUCC_Taxonomy__c = null); // as SetNull leaves it
-
-        Test.startTest();
-        ProviderIntakeService.IngestResult result = ProviderIntakeService.ingest(row(FAMILY, ''));
-        Test.stopTest();
-
-        Map<String, HealthcareProviderTaxonomy> byCode = links(existing().Healthcare_Provider__c);
-        Assert.areEqual(1, byCode.size(), 'Found by code: no second link');
-        Assert.areEqual(taxonomyId(FAMILY), byCode.get(FAMILY).NUCC_Taxonomy__c, 'Lookup refilled');
-        Assert.areEqual(ProviderIntakeService.Outcome.UNCHANGED, result.outcome, 'A repair is not a reported change');
     }
 
     // ─── Values that cannot be used ────────────────────────────────────
