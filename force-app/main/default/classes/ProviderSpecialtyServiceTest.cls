@@ -21,7 +21,11 @@ private class ProviderSpecialtyServiceTest {
     }
 
     private static verifiable__VfiNUCCTaxonomy__c taxonomy(String name, String code, String vuid) {
-        return new verifiable__VfiNUCCTaxonomy__c(verifiable__Specialization__c = name, verifiable__TaxonomyCode__c = code, verifiable__Vuid__c = vuid);
+        // Name is set by the NUCC taxonomy bulk load (and its updates) in stage and production;
+        // nothing in the org fills it in on insert, so the test sets it as the load would.
+        return new verifiable__VfiNUCCTaxonomy__c(
+            Name = name, verifiable__Specialization__c = name, verifiable__TaxonomyCode__c = code, verifiable__Vuid__c = vuid
+        );
     }
 
     private static Id taxonomyId(String code) {

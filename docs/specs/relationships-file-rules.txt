@@ -12,7 +12,7 @@ FILE FORMAT
   Provider Unique ID, Individual NPI, Facility Unique ID, Facility NPI, Facility Shipping Address, Relationship Start Date, Terminate. A missing column fails the whole run. Values may be blank. Column names must match exactly, including case and spacing.
 
 - The relationship field columns are optional.
-  Limitations, Practitioner Scheduling URL and Telemedicine Capability may be left out of the header (see RELATIONSHIP FIELDS). A misspelt one is ignored without a warning. "Include in Directory?" is not used: that field is calculated by Salesforce.
+  Limitations, Practitioner Scheduling URL and Telemedicine Capability may be left out of the header (see RELATIONSHIP FIELDS). Any column not listed in this file, including a misspelt one, is ignored; the run gets one warning UNKNOWN_COLUMNS on row 1 (the header) naming them all. If a required column is missing, the failure message also names the columns that were not recognized. "Include in Directory?" is not used (that field is calculated by Salesforce), so it is named in that warning too.
 
 - Every row has the same number of columns as the header.
   A row with a different count is a row error (COLUMN_COUNT) and is skipped.

@@ -990,4 +990,17 @@ private class RelationshipIntakeServiceTest {
         Assert.areEqual(RosterIntakeIssues.START_DATE_DIFFERS.code, result.warnings[0].code, 'Start date warning');
         Assert.areEqual('Adults only', fieldsOf('Alpha').Limitations__c, 'Other fields still updated');
     }
+
+    @IsTest
+    static void shouldKnowEveryColumnItReads() {
+        Set<String> known = new RelationshipIntakeService.Processor().knownHeaders();
+
+        Assert.isTrue(known.containsAll(RelationshipCsvMapping.HEADERS), 'Required columns are known');
+        for (ProviderCsvMapping.FieldMapping mapping : RelationshipCsvMapping.RELATIONSHIP_MAPPINGS) {
+            Assert.isTrue(known.containsAll(mapping.headers), 'Relationship field column is known: ' + mapping.headers);
+        }
+        Assert.isTrue(known.contains(RelationshipCsvMapping.TERMINATION_DATE_HEADER), 'Termination Date is known');
+        Assert.isTrue(known.contains(RelationshipCsvMapping.TERMINATION_NOTES_HEADER), 'Termination Notes is known');
+        Assert.isFalse(known.contains('Include in Directory?'), 'The unmapped formula column is not known');
+    }
 }

@@ -9,7 +9,7 @@ FILE FORMAT
   Spreadsheet row numbers are used in Issues, with the header as row 1.
 
 - Column names must match exactly.
-  Case and spacing matter. Unknown columns are ignored without a warning.
+  Case and spacing matter. Unknown columns are ignored; the run gets one warning UNKNOWN_COLUMNS on row 1 (the header) naming them all. If a required column is missing, the failure message also names the columns that were not recognized.
 
 - Required columns.
   Provider Unique ID, Individual NPI and Last Name must be present in the header, otherwise the whole run fails. Their values may be blank on any row.

@@ -338,4 +338,23 @@ private class ProviderCsvMappingTest {
 
         Assert.isFalse(same, 'A blank stored value differs from an incoming value');
     }
+
+    @IsTest
+    static void shouldKnowEveryColumnItReads() {
+        Set<String> known = new ProviderIntakeService.Processor().knownHeaders();
+
+        Assert.isTrue(known.containsAll(new ProviderIntakeService.Processor().requiredHeaders()), 'Required columns are known');
+        for (List<ProviderCsvMapping.FieldMapping> mappings : new List<List<ProviderCsvMapping.FieldMapping>>{
+            ProviderCsvMapping.MAPPINGS, ProviderCsvMapping.HEALTHCARE_PROVIDER_MAPPINGS
+        }) {
+            for (ProviderCsvMapping.FieldMapping mapping : mappings) {
+                Assert.isTrue(known.containsAll(mapping.headers), 'Mapped column is known: ' + mapping.headers);
+            }
+        }
+        Assert.isTrue(known.contains('Provider Mailing Address Line 2'), 'Both street lines are known');
+        Assert.isTrue(known.contains(ProviderCsvMapping.PRIMARY_SPECIALTY_HEADER), 'Primary specialty is known');
+        Assert.isTrue(known.contains(ProviderCsvMapping.SECONDARY_SPECIALTY_HEADER), 'Secondary specialty is known');
+        Assert.isFalse(known.contains('Provider Effective Date'), 'An unmapped column is not known');
+        Assert.isFalse(known.contains('last name'), 'Matching is case-sensitive');
+    }
 }

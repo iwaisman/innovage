@@ -59,6 +59,10 @@ public inherited sharing class RosterIntakeIssues {
 
     public static final Issue COLUMN_COUNT = new Issue('COLUMN_COUNT', SEVERITY_ERROR, FileType.BOTH,
         'A row has a different number of columns from the header (RosterIntakeBatch).');
+    public static final Issue UNKNOWN_COLUMNS = new Issue('UNKNOWN_COLUMNS', SEVERITY_WARNING, FileType.BOTH,
+        'The header has columns the file type does not read (RosterRowProcessor.knownHeaders), so their values '
+        + 'are ignored. Raised once per Run, on row 1 (the header), by RosterIntakeBatch.start; it does not '
+        + 'count toward Rows With Warnings.');
 
     // ─── Both files: Provider matching (AccountMatchResult.Outcome names) ──
 
@@ -184,7 +188,7 @@ public inherited sharing class RosterIntakeIssues {
 
     /** Every entry above. */
     public static final List<Issue> ALL = new List<Issue>{
-        COLUMN_COUNT,
+        COLUMN_COUNT, UNKNOWN_COLUMNS,
         NO_KEY_VALUES, MALFORMED_UNIQUE_ID, MALFORMED_NPI, UNKNOWN_UNIQUE_ID, MULTIPLE_MATCHES, KEY_MISMATCH,
         SAVE_ERROR,
         MISSING_LAST_NAME, LAST_NAME_DIFFERS, INVALID_VALUE, ADDRESS_NOT_UPDATED, HEALTHCARE_PROVIDER_NOT_SAVED,

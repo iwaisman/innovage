@@ -199,6 +199,11 @@
                 <default>false</default>
                 <label>TERMINATION_BEFORE_START</label>
             </value>
+            <value>
+                <fullName>UNKNOWN_COLUMNS</fullName>
+                <default>false</default>
+                <label>UNKNOWN_COLUMNS</label>
+            </value>
         </valueSetDefinition>
     </valueSet>
 </CustomField>

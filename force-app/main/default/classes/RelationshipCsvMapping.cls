@@ -144,6 +144,20 @@ public inherited sharing class RelationshipCsvMapping {
     }
 
     /**
+     * @return Every column mapRow reads: HEADERS, the RELATIONSHIP_MAPPINGS
+     *         headers, Termination Date and Termination Notes
+     */
+    public static Set<String> knownHeaders() {
+        Set<String> known = new Set<String>(HEADERS);
+        for (ProviderCsvMapping.FieldMapping mapping : RELATIONSHIP_MAPPINGS) {
+            known.addAll(mapping.headers);
+        }
+        known.add(TERMINATION_DATE_HEADER);
+        known.add(TERMINATION_NOTES_HEADER);
+        return known;
+    }
+
+    /**
      * @param row One CSV row, header => value
      * @return The row's keys, start date, action and warnings
      * @throws IllegalArgumentException if row is null

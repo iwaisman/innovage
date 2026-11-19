@@ -13,6 +13,13 @@ public interface RosterRowProcessor {
     List<String> requiredHeaders();
 
     /**
+     * @return Every column this file type reads, required or optional. Any
+     *         other column in the file is ignored, and the Run gets one
+     *         UNKNOWN_COLUMNS warning naming them.
+     */
+    Set<String> knownHeaders();
+
+    /**
      * Called once per Run, before any row is processed, to add what this file
      * type needs to the context.
      *

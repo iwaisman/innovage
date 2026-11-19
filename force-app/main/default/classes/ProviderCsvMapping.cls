@@ -314,6 +314,20 @@ public inherited sharing class ProviderCsvMapping {
         new Map<Schema.SObjectField, Map<String, String>>();
 
     /**
+     * @return Every column mapRow reads: the keys, the specialties, and the
+     *         headers of MAPPINGS and HEALTHCARE_PROVIDER_MAPPINGS
+     */
+    public static Set<String> knownHeaders() {
+        Set<String> known = new Set<String>{ UNIQUE_ID_HEADER, NPI_HEADER, PRIMARY_SPECIALTY_HEADER, SECONDARY_SPECIALTY_HEADER };
+        for (List<FieldMapping> mappings : new List<List<FieldMapping>>{ MAPPINGS, HEALTHCARE_PROVIDER_MAPPINGS }) {
+            for (FieldMapping mapping : mappings) {
+                known.addAll(mapping.headers);
+            }
+        }
+        return known;
+    }
+
+    /**
      * @param row One CSV row, header => value
      * @return The key values, the valid field values, and warnings for dropped values
      * @throws IllegalArgumentException if row is null

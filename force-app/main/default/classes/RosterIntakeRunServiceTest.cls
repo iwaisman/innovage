@@ -143,7 +143,12 @@ private class RosterIntakeRunServiceTest {
                 issuesByRow.put(issue.Row_Number__c.intValue(), issue);
             }
 
-            Assert.areEqual(new Set<Integer>{ 4, 5, 6 }, issuesByRow.keySet(), 'One issue each for rows 4, 5 and 6');
+            Assert.areEqual(new Set<Integer>{ 1, 4, 5, 6 }, issuesByRow.keySet(), 'One issue each for the header and rows 4, 5 and 6');
+            Roster_Intake_Issue__c header = issuesByRow.get(1);
+            Assert.areEqual(RosterIntakeIssues.UNKNOWN_COLUMNS.code, header.Code__c, 'The header has an unmapped column');
+            Assert.areEqual(RosterIntakeIssues.SEVERITY_WARNING, header.Severity__c, 'Unknown columns are a warning');
+            Assert.areEqual('Provider Effective Date', header.Column__c, 'Names the ignored column');
+            Assert.isTrue(header.Message__c.contains('"Provider Effective Date"'), 'Message names it: ' + header.Message__c);
             Assert.areEqual(AccountMatchResult.Outcome.UNKNOWN_UNIQUE_ID.name(), issuesByRow.get(4).Code__c, 'Row 4 names no existing Provider');
             Assert.areEqual(UNKNOWN_UNIQUE_ID, issuesByRow.get(4).Provider_Unique_ID__c, 'Issue keeps the row key');
             Assert.areEqual(RosterIntakeIssues.SEVERITY_WARNING, issuesByRow.get(5).Severity__c, 'Row 5 is a warning');
@@ -162,7 +167,8 @@ private class RosterIntakeRunServiceTest {
             Test.stopTest();
 
             assertStandardCounts(reload(runId));
-            Assert.areEqual(3, [SELECT COUNT() FROM Roster_Intake_Issue__c WHERE Roster_Intake_Run__c = :runId], 'Same issues');
+            // The header's UNKNOWN_COLUMNS warning, and one Issue each for rows 4, 5 and 6.
+            Assert.areEqual(4, [SELECT COUNT() FROM Roster_Intake_Issue__c WHERE Roster_Intake_Run__c = :runId], 'Same issues');
         }
     }
 
@@ -250,6 +256,41 @@ private class RosterIntakeRunServiceTest {
     }
 
     @IsTest
+    static void shouldWarnOnceOfIgnoredColumns_WhenRelationshipsFileHasUnknownColumns() {
+        List<String> headers = new List<String>(RelationshipCsvMapping.HEADERS);
+        headers.add(1, 'Include in Directory?');
+        headers.add('limitations'); // the known "Limitations", but in the wrong case
+        Map<String, String> row = RelationshipTestDataFactory.row('', '', '');
+        row.put('Include in Directory?', 'Yes');
+        row.put('limitations', 'None');
+        String csv = ProviderTestDataFactory.toCsv(headers, new List<Map<String, String>>{ row, row.clone() });
+
+        System.runAs(ProviderTestDataFactory.intakeUser(USER_LAST_NAME)) {
+            RelationshipTestDataFactory.uploadRelationshipsFile(roster(), Blob.valueOf(csv));
+            Id runId = RosterIntakeRunService.startRun(roster().Id, RosterIntakeRunService.FILE_TYPE_RELATIONSHIPS);
+
+            Test.startTest();
+            runToCompletion(runId, RosterIntakeRunService.BATCH_SIZE);
+            Test.stopTest();
+
+            List<Roster_Intake_Issue__c> issues = [
+                SELECT Row_Number__c, Severity__c, Column__c, Message__c
+                FROM Roster_Intake_Issue__c
+                WHERE Roster_Intake_Run__c = :runId AND Code__c = :RosterIntakeIssues.UNKNOWN_COLUMNS.code
+            ];
+            Assert.areEqual(1, issues.size(), 'One warning for the file, not one per row');
+            Assert.areEqual(1, issues[0].Row_Number__c, 'Recorded on the header row');
+            Assert.areEqual(RosterIntakeIssues.SEVERITY_WARNING, issues[0].Severity__c, 'A warning');
+            Assert.areEqual('Include in Directory?, limitations', issues[0].Column__c, 'Names both columns, in file order');
+            Assert.isTrue(
+                issues[0].Message__c.contains('"Include in Directory?", "limitations"'),
+                'Message names them: ' + issues[0].Message__c
+            );
+            Assert.areEqual(0, reload(runId).Rows_With_Warnings__c ?? 0, 'The header is not counted as a row with warnings');
+        }
+    }
+
+    @IsTest
     static void shouldFailRelationshipsRun_WhenRequiredHeaderMissing() {
         System.runAs(ProviderTestDataFactory.intakeUser(USER_LAST_NAME)) {
             RelationshipTestDataFactory.uploadRelationshipsFile(roster(), Blob.valueOf('"Individual NPI","Terminate"\r\n"1234567893",""\r\n'));
@@ -308,6 +349,21 @@ private class RosterIntakeRunServiceTest {
             Assert.areEqual(RosterIntakeRunService.STATUS_FAILED, run.Status__c, 'File-level problem fails the run');
             Assert.isTrue(run.Failure_Message__c.contains('"Last Name"'), 'Names the missing column: ' + run.Failure_Message__c);
             Assert.areEqual(0, run.Rows_Processed__c, 'No rows processed');
+            Assert.isFalse(run.Failure_Message__c.contains('not recognized'), 'Every column is known: ' + run.Failure_Message__c);
+        }
+    }
+
+    @IsTest
+    static void shouldNameUnrecognizedColumns_WhenRequiredHeaderMissing() {
+        System.runAs(ProviderTestDataFactory.intakeUser(USER_LAST_NAME)) {
+            Roster_Intake_Run__c run = runFile(Blob.valueOf('"Individual NPI","Provider Unique ID","Last name"\r\n"1234567893","","X"\r\n'));
+
+            Assert.areEqual(RosterIntakeRunService.STATUS_FAILED, run.Status__c, 'File-level problem fails the run');
+            Assert.isTrue(
+                run.Failure_Message__c.contains('Columns not recognized: "Last name".'),
+                'Names the misspelt column: ' + run.Failure_Message__c
+            );
+            Assert.areEqual(0, [SELECT COUNT() FROM Roster_Intake_Issue__c WHERE Roster_Intake_Run__c = :run.Id], 'No Issues on a failed file');
         }
     }
 

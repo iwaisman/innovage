@@ -61,7 +61,7 @@ row processor and the Run's context.
 | `RosterIntakeRunController` | `@AuraEnabled` entry points for the `rosterIntakeRunPanel` LWC: `getActiveRun(recordId, fileType)` (first fails any stuck Run, then returns the roster's Queued or Running Run of that type, or null), `startRun(recordId, fileType)` and `cancel`. Converts `RunException` into `AuraHandledException`. |
 | `RosterIntakeRunService` | The user actions: start a Run of a file type (pin the file version, create the Run, launch the batch), cancel. Also holds the shared constants, `processorFor(fileType)`, `finish()` (set a Run's final status) and `failAbandonedRuns()`. |
 | `RosterIntakeBatch` | The processing, for any file type. `start()` loads and parses the whole file and prepares the Run's context; `execute()` hands one slice of rows to the file type's processor and records Issues and counts; `finish()` sets the final status. |
-| `RosterRowProcessor` | The interface each file type implements: `requiredHeaders()`, `prepare(context)` (once per Run) and `ingestAll(rows, context)` (once per slice). |
+| `RosterRowProcessor` | The interface each file type implements: `requiredHeaders()`, `knownHeaders()` (every column it reads; the others are reported as UNKNOWN_COLUMNS), `prepare(context)` (once per Run) and `ingestAll(rows, context)` (once per slice). |
 | `RosterIntakeIssues` | The catalog of every Issue code: its severity (Error or Warning), the file type(s) that raise it, and when it is raised. Issues are raised with a catalog entry, never a bare code; `RosterIntakeRow.Result.fail()` and `RosterIntakeRow.Warning` reject an entry of the wrong severity, and `RosterIntakeBatch` writes each Issue's code and severity from its entry. New codes are declared here and added to the restricted `Roster_Intake_Issue__c.Code__c` picklist; `RosterIntakeIssuesTest` checks the two match. |
 | `RosterIntakeRow` | The shared types: `Input` (row number and values), `Result` (outcome, error, warnings, values to copy onto Issues), `Warning` (the one warning type every file type uses, from where a warning is raised to the Issue), and `Context` (roster, Organization, run date, Organization scope). |
 | `CsvParser` | RFC 4180 CSV parser. `parse()` returns every record; `toHeaders()` trims and validates the header row. |
@@ -193,13 +193,21 @@ sequenceDiagram
 2. Picks the processor for the Run's file type.
 3. Loads the pinned file version as text and parses all of it.
 4. Checks that the file isn't empty and has the processor's required columns,
-   and that it has at most 5,000 data rows.
+   and that it has at most 5,000 data rows. When a required column is missing,
+   the failure message also names the columns the processor does not know
+   (`knownHeaders()`), since one is often the missing column misspelt.
 5. Builds the Run's context (roster, its Organization, the run date) and lets
    the processor add to it (`prepare`). The relationships processor computes
    the Organization scope here, once for the whole Run.
 6. Stores the header, processor and context on the batch object
    (`Database.Stateful`) and Rows Total on the Run.
-7. Returns one `RowItem` per data row: its spreadsheet row number and its values
+7. If the header has columns the processor does not know (compared exactly,
+   case and spacing included), inserts one **UNKNOWN_COLUMNS** warning on
+   row 1 (the header) that names them all, in file order. It is the only Issue
+   not about a data row, so it does not count toward Rows With Warnings.
+   `ProviderCsvMapping.knownHeaders()` and `RelationshipCsvMapping.knownHeaders()`
+   are built from the same constants and mapping lists that `mapRow` reads.
+8. Returns one `RowItem` per data row: its spreadsheet row number and its values
    as a list. The header names are stored once rather than in every row.
 
 Any file-level problem marks the Run **Failed** and returns an empty list, so no
@@ -294,7 +302,10 @@ also stored in `Taxonomy_Code__c`.
 - **Secondary:** adds the link if missing. It never changes the primary flag.
 - **Never removed:** a specialty missing from a later file stays linked.
 - **New links:** `Name` = the taxonomy's name, `IsActive = true` (it defaults to
-  false), `AccountId` left blank.
+  false), `AccountId` left blank. The taxonomy's `Name` is assumed to be set by
+  the NUCC taxonomy bulk load and its updates (stage and production); nothing
+  in the org fills it in on insert, so a taxonomy record without one would give
+  links named after its record Id.
 - **Codes that can't be used:** an unknown code, or one shared by several
   taxonomy records (the code is not unique in the schema), is ignored with a
   warning (UNKNOWN_SPECIALTY / AMBIGUOUS_SPECIALTY). A link that fails to save
@@ -516,7 +527,8 @@ single-line address.
 | Malformed relationship start date on a create row | `RelationshipIntakeService` | An **Error** Issue (INVALID_START_DATE); the row is not ingested. Terminate rows ignore the start date. |
 | Row cannot be matched or saved | matchers / services | An **Error** Issue is recorded with a code (a match outcome, MISSING_LAST_NAME, a facility code, SAVE_ERROR, COLUMN_COUNT, …). Other rows are unaffected. |
 | A Provider update fails with a SAVE_ERROR about "Sync Individual Provider to Healthcare Provider" and `DUPLICATE_VALUE … CaqhIdentifier`, although the row changes something unrelated (e.g. the phone) | The org's flow, during the update | Another Provider has the same CAQH ID (a known, accepted risk; see section 6). Correct the CAQH ID on one of the two Providers, then re-run. |
-| File-level problem: not UTF-8, empty, malformed CSV, missing required column, more than 5,000 rows, file version deleted | `RosterIntakeBatch.start()` | The Run is **Failed** with the reason. No rows are processed. |
+| File-level problem: not UTF-8, empty, malformed CSV, missing required column, more than 5,000 rows, file version deleted | `RosterIntakeBatch.start()` | The Run is **Failed** with the reason (for a missing column, also the columns not recognized). No rows are processed. |
+| The header has columns the file type does not read (unmapped, or misspelt) | `RosterIntakeBatch.start()` | Their values are ignored. One **Warning** Issue (UNKNOWN_COLUMNS) on row 1 names them all; the rows are processed as usual. |
 | A slice throws, including on a governor limit | Salesforce | That slice is rolled back and the job moves on. `finish()` reports the missing rows (Completed with Errors, or Failed if every slice failed). Re-running the file is safe: rows already ingested come out UNCHANGED. |
 | The job dies where the batch can't record it (e.g. a governor limit in `start()`) | `RosterIntakeRunService.failAbandonedRuns` | The Run would stay Queued or Running. Whenever runs are listed, and before a new Run starts, any active Run whose batch job has ended (Completed, Failed or Aborted) is marked **Failed**, with the job's error. |
 | User cancels | `RosterIntakeRunService.cancel` | The Run is marked **Cancelled** and the batch job is aborted. A slice already in progress still commits; later slices find the Run cancelled and do nothing. |

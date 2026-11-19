@@ -151,6 +151,10 @@ public with sharing class ProviderIntakeService {
             return new List<String>{ ProviderCsvMapping.UNIQUE_ID_HEADER, ProviderCsvMapping.NPI_HEADER, ProviderCsvMapping.LAST_NAME_HEADER };
         }
 
+        public Set<String> knownHeaders() {
+            return ProviderCsvMapping.knownHeaders();
+        }
+
         public void prepare(RosterIntakeRow.Context context) {
             // Providers are global: they need nothing about the Run.
             return;

@@ -80,6 +80,7 @@ public with sharing class RosterIntakeBatch implements Database.Batchable<Roster
         run.Started_At__c = System.now();
 
         List<RowItem> rows = new List<RowItem>();
+        List<String> unknownColumns;
         try {
             processor = RosterIntakeRunService.processorFor(run.File_Type__c);
 
@@ -87,7 +88,8 @@ public with sharing class RosterIntakeBatch implements Database.Batchable<Roster
                 loadFile(run.Content_Version_ID__c),
                 new CsvParser.Options(false, true)
             );
-            headers = readHeaders(records, processor.requiredHeaders());
+            headers = readHeaders(records, processor);
+            unknownColumns = unknownHeaders(headers, processor.knownHeaders());
 
             Integer dataRows = records.size() - 1;
             if (dataRows > maxRows) {
@@ -114,6 +116,13 @@ public with sharing class RosterIntakeBatch implements Database.Batchable<Roster
         }
 
         Database.update(run, AccessLevel.SYSTEM_MODE);
+        if (!unknownColumns.isEmpty()) {
+            Roster_Intake_Issue__c issue = newIssue(runId, 1, RosterIntakeIssues.UNKNOWN_COLUMNS,
+                'These columns are not used and were ignored: ' + quoted(unknownColumns) +
+                '. Column names must match exactly, including case and spacing.');
+            issue.Column__c = String.join(unknownColumns, ', ').left(255);
+            Database.insert(issue, AccessLevel.SYSTEM_MODE);
+        }
         return rows;
     }
 
@@ -221,22 +230,59 @@ public with sharing class RosterIntakeBatch implements Database.Batchable<Roster
         }
     }
 
-    private static List<String> readHeaders(List<List<String>> records, List<String> requiredHeaders) {
+    /*
+     * A missing required column fails the file. The message also names the
+     * columns that were not recognized, since one of them is often the missing
+     * column misspelt (e.g. "Last name").
+     */
+    private static List<String> readHeaders(List<List<String>> records, RosterRowProcessor processor) {
         if (records.isEmpty()) {
             throw new RosterIntakeRunService.RunException('The file is empty.');
         }
 
         List<String> headers = CsvParser.toHeaders(records[0]);
         List<String> missing = new List<String>();
-        for (String required : requiredHeaders) {
+        for (String required : processor.requiredHeaders()) {
             if (!headers.contains(required)) {
-                missing.add('"' + required + '"');
+                missing.add(required);
             }
         }
         if (!missing.isEmpty()) {
-            throw new RosterIntakeRunService.RunException('The file is missing required columns: ' + String.join(missing, ', ') + '.');
+            String message = 'The file is missing required columns: ' + quoted(missing) + '.';
+            List<String> unknown = unknownHeaders(headers, processor.knownHeaders());
+            if (!unknown.isEmpty()) {
+                message += ' Columns not recognized: ' + quoted(unknown) + '.';
+            }
+            throw new RosterIntakeRunService.RunException(message);
         }
         return headers;
+    }
+
+    /* The headers the processor does not read, in file order. Matching is exact (case and spacing count). */
+    private static List<String> unknownHeaders(List<String> headers, Set<String> knownHeaders) {
+        List<String> unknown = new List<String>();
+        for (String header : headers) {
+            if (!knownHeaders.contains(header)) {
+                unknown.add(String.isBlank(header) ? '(unnamed column)' : header);
+            }
+        }
+        return unknown;
+    }
+
+    /* "A", "B", "C" */
+    private static String quoted(List<String> names) {
+        return '"' + String.join(names, '", "') + '"';
+    }
+
+    /* A new Issue on the Run. Its code and severity come from its catalog entry. */
+    private static Roster_Intake_Issue__c newIssue(Id runId, Integer rowNumber, RosterIntakeIssues.Issue entry, String message) {
+        return new Roster_Intake_Issue__c(
+            Roster_Intake_Run__c = runId,
+            Row_Number__c = rowNumber,
+            Severity__c = entry.severity,
+            Code__c = entry.code,
+            Message__c = message?.left(32768)
+        );
     }
 
     private static String jobError(Database.BatchableContext batchContext) {
@@ -298,15 +344,8 @@ public with sharing class RosterIntakeBatch implements Database.Batchable<Roster
             }
         }
 
-        /* The Issue's code and severity come from its catalog entry. */
         private Roster_Intake_Issue__c newIssue(Integer rowNumber, RosterIntakeIssues.Issue entry, String message) {
-            return new Roster_Intake_Issue__c(
-                Roster_Intake_Run__c = runId,
-                Row_Number__c = rowNumber,
-                Severity__c = entry.severity,
-                Code__c = entry.code,
-                Message__c = message?.left(32768)
-            );
+            return RosterIntakeBatch.newIssue(runId, rowNumber, entry, message);
         }
 
         /* Copies the row's key values onto the Issue, cutting text to the field's length. */

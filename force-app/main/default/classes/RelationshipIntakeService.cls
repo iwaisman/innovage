@@ -71,6 +71,10 @@ public with sharing class RelationshipIntakeService {
             return RelationshipCsvMapping.HEADERS;
         }
 
+        public Set<String> knownHeaders() {
+            return RelationshipCsvMapping.knownHeaders();
+        }
+
         /* The Organization scope is worked out once per Run and kept for every slice. */
         public void prepare(RosterIntakeRow.Context context) {
             if (context.organizationId == null) {
